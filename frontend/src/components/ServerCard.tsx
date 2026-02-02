@@ -13,12 +13,14 @@ import {
   CogIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import ServerConfigModal from './ServerConfigModal';
 import SecurityScanModal from './SecurityScanModal';
 import StarRatingWidget from './StarRatingWidget';
 import VersionBadge from './VersionBadge';
 import VersionSelectorModal from './VersionSelectorModal';
+import DeleteConfirmation from './DeleteConfirmation';
 
 interface ServerVersion {
   version: string;
@@ -62,9 +64,11 @@ interface ServerCardProps {
   canModify?: boolean;
   canHealthCheck?: boolean;
   canToggle?: boolean;
+  canDelete?: boolean;
   onRefreshSuccess?: () => void;
   onShowToast?: (message: string, type: 'success' | 'error') => void;
   onServerUpdate?: (path: string, updates: Partial<Server>) => void;
+  onDelete?: (path: string) => Promise<void>;
   authToken?: string | null;
 }
 
@@ -114,7 +118,7 @@ const formatTimeSince = (timestamp: string | null | undefined): string | null =>
   }
 };
 
-const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, onEdit, canModify, canHealthCheck = true, canToggle = true, onRefreshSuccess, onShowToast, onServerUpdate, authToken }) => {
+const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, onEdit, canModify, canHealthCheck = true, canToggle = true, canDelete, onRefreshSuccess, onShowToast, onServerUpdate, onDelete, authToken }) => {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loadingTools, setLoadingTools] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -124,6 +128,7 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
   const [securityScanResult, setSecurityScanResult] = useState<any>(null);
   const [loadingSecurityScan, setLoadingSecurityScan] = useState(false);
   const [showVersionSelector, setShowVersionSelector] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Fetch security scan status on mount to show correct icon color
   useEffect(() => {
@@ -331,6 +336,19 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
           ? 'bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border-2 border-purple-200 dark:border-purple-700 hover:border-purple-300 dark:hover:border-purple-600'
           : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600'
       }`}>
+        {/* Render DeleteConfirmation inline when showDeleteConfirm is true */}
+        {showDeleteConfirm ? (
+          <div className="p-5 h-full flex flex-col justify-center">
+            <DeleteConfirmation
+              entityType="server"
+              entityName={server.name || server.path.replace(/^\//, '')}
+              entityPath={server.path}
+              onConfirm={onDelete!}
+              onCancel={() => setShowDeleteConfirm(false)}
+            />
+          </div>
+        ) : (
+        <>
         {/* Header */}
         <div className="p-5 pb-4">
           <div className="flex items-start justify-between mb-4">
@@ -397,6 +415,18 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
             >
               {React.createElement(getSecurityIconState().Icon, { className: "h-4 w-4" })}
             </button>
+
+            {/* Delete Button */}
+            {canDelete && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="p-2 text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-700/50 rounded-lg transition-all duration-200 flex-shrink-0"
+                title="Delete server"
+                aria-label={`Delete ${server.name}`}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           {/* Description */}
@@ -585,6 +615,8 @@ const ServerCard: React.FC<ServerCardProps> = React.memo(({ server, onToggle, on
             </div>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Tools Modal */}

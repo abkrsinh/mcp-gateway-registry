@@ -31,6 +31,7 @@
     "register_service": ["all"],
     "health_check_service": ["all"],
     "toggle_service": ["all"],
-    "modify_service": ["all"]
+    "modify_service": ["all"],
+    "delete_service": ["all"]
   }
 }

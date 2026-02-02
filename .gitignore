@@ -198,9 +198,15 @@ cookies.txt
 # Roo IDE files
 .roo/
 
+# VS Code / IDE files
+.vscode/
+
 # Kiro files
 .kiro
 .kiro/
+
+# Agent config
+agents/agent_config.json
 
 # Jules files
 .Jules/

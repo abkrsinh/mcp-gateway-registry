@@ -1105,7 +1105,7 @@ class TestDeleteAgent:
 
     @pytest.mark.asyncio
     async def test_delete_agent_not_owner(self, test_app, mock_user_context):
-        """Test deleting agent as non-owner (403)."""
+        """Test deleting agent as non-owner without delete_agent permission (403)."""
         # Arrange
         other_user_agent = AgentCardFactory(
             path="/agents/other-agent",
@@ -1121,7 +1121,8 @@ class TestDeleteAgent:
 
             # Assert
             assert response.status_code == status.HTTP_403_FORBIDDEN
-            assert "admins or agent owners" in response.json()["detail"].lower()
+            # Updated error message includes delete_agent permission option
+            assert "delete_agent permission" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_delete_agent_not_found(self, test_app, mock_user_context):

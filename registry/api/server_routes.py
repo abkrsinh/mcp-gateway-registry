@@ -3175,6 +3175,23 @@ async def remove_service_api(
             },
         )
 
+    # Fine-grained delete permission check (gateway already validated api.servers access)
+    if not user_context.get("is_admin", False):
+        ui_permissions = user_context.get("ui_permissions", {})
+        delete_service_perms = ui_permissions.get("delete_service", [])
+        server_name = path.strip("/")
+        if "all" not in delete_service_perms and server_name not in delete_service_perms:
+            logger.warning(
+                f"User {user_context.get('username')} denied delete for server {path}"
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "Permission denied",
+                    "reason": f"User does not have delete_service permission for '{path}'",
+                },
+            )
+
     # Remove the server
     success = await server_service.remove_server(path)
 

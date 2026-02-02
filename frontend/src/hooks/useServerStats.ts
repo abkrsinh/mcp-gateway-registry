@@ -28,6 +28,7 @@ interface Server {
   mcp_server_version?: string;
   mcp_server_version_previous?: string;
   mcp_server_version_updated_at?: string;
+  registered_by?: string | null;
 }
 
 interface ServerStats {
@@ -159,6 +160,7 @@ export const useServerStats = (): UseServerStatsReturn => {
           status: 'unknown' as const, // Agents don't have health status yet
           num_tools: agentInfo.num_skills || 0, // Use num_skills for agents
           type: 'agent' as const,
+          registered_by: agentInfo.registered_by || agentInfo.registeredBy || null,
         };
         
         console.log(`🔄 Transformed agent ${transformed.name}:`, {
