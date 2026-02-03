@@ -1,10 +1,11 @@
 import logging
 from typing import Annotated, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import nginx_proxied_auth
+from ..audit import set_audit_action
 from ..repositories.factory import get_search_repository
 from ..repositories.interfaces import SearchRepositoryBase
 from ..services.server_service import server_service
@@ -167,6 +168,7 @@ async def _user_can_access_agent(agent_path: str, user_context: dict) -> bool:
     summary="Unified semantic search for MCP servers and tools",
 )
 async def semantic_search(
+    http_request: Request,
     request: SemanticSearchRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
     search_repo: SearchRepositoryBase = Depends(get_search_repo),
@@ -174,6 +176,9 @@ async def semantic_search(
     """
     Run a semantic search against MCP servers (and their tools) using FAISS embeddings.
     """
+    # Set audit action for search
+    set_audit_action(http_request, "search", "search", description=f"Semantic search: {request.query[:50]}...")
+    
     logger.info(
         "Semantic search requested by %s (entities=%s, max=%s)",
         user_context.get("username"),

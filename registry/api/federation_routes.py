@@ -8,9 +8,10 @@ import logging
 from datetime import UTC
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..auth.dependencies import nginx_proxied_auth
+from ..audit import set_audit_action
 from ..repositories.factory import get_federation_config_repository
 from ..repositories.interfaces import FederationConfigRepositoryBase
 from ..schemas.federation_schema import FederationConfig
@@ -32,6 +33,7 @@ def _get_federation_repo() -> FederationConfigRepositoryBase:
 
 @router.get("/federation/config", tags=["federation"], summary="Get federation configuration")
 async def get_federation_config(
+    request: Request,
     config_id: str = "default",
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
     repo: FederationConfigRepositoryBase = Depends(_get_federation_repo),
@@ -50,6 +52,9 @@ async def get_federation_config(
     Raises:
         404: Configuration not found
     """
+    # Set audit action for federation config read
+    set_audit_action(request, "read", "federation", resource_id=config_id, description=f"Read federation config {config_id}")
+    
     logger.info(f"User {user_context['username']} retrieving federation config: {config_id}")
 
     config = await repo.get_config(config_id)
@@ -70,6 +75,7 @@ async def get_federation_config(
     status_code=status.HTTP_201_CREATED,
 )
 async def save_federation_config(
+    request: Request,
     config: FederationConfig,
     config_id: str = "default",
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
@@ -109,6 +115,9 @@ async def save_federation_config(
         }
         ```
     """
+    # Set audit action for federation config create/update
+    set_audit_action(request, "create", "federation", resource_id=config_id, description=f"Save federation config {config_id}")
+    
     logger.info(
         f"User {user_context['username']} saving federation config: {config_id} "
         f"(anthropic: {config.anthropic.enabled}, asor: {config.asor.enabled})"
@@ -138,6 +147,7 @@ async def save_federation_config(
     summary="Update specific federation configuration",
 )
 async def update_federation_config(
+    request: Request,
     config_id: str,
     config: FederationConfig,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
@@ -155,6 +165,9 @@ async def update_federation_config(
     Returns:
         Updated configuration
     """
+    # Set audit action for federation config update
+    set_audit_action(request, "update", "federation", resource_id=config_id, description=f"Update federation config {config_id}")
+    
     logger.info(f"User {user_context['username']} updating federation config: {config_id}")
 
     try:
@@ -450,6 +463,7 @@ async def remove_asor_agent(
 
 @router.post("/federation/sync", tags=["federation"], summary="Trigger manual federation sync")
 async def sync_federation(
+    request: Request,
     config_id: str = "default",
     source: str | None = None,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
@@ -478,6 +492,9 @@ async def sync_federation(
         POST /api/federation/sync?source=anthropic
         ```
     """
+    # Set audit action for federation sync
+    set_audit_action(request, "sync", "federation", resource_id=config_id, description=f"Sync federation from {source or 'all sources'}")
+    
     logger.info(f"User {user_context['username']} triggering federation sync: {config_id}")
 
     # Get federation config

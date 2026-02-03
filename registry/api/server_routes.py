@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 import httpx
 
 from ..core.config import settings
+from ..audit import set_audit_action
 from ..auth.dependencies import enhanced_auth, nginx_proxied_auth
 from ..services.server_service import server_service
 from ..services.security_scanner import security_scanner_service
@@ -2902,6 +2903,9 @@ async def register_service_api(
       -F "proxy_pass_url=http://localhost:8000"
     ```
     """
+    # Set audit action for server registration
+    set_audit_action(request, "create", "server", resource_id=path, description=f"Register server {name}")
+    
     logger.info(
         f"API register service request from user '{user_context.get('username')}' for service '{name}'"
     )
@@ -3081,6 +3085,7 @@ async def register_service_api(
 
 @router.post("/servers/toggle")
 async def toggle_service_api(
+    request: Request,
     path: Annotated[str, Form()],
     new_state: Annotated[bool, Form()],
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
@@ -3112,6 +3117,9 @@ async def toggle_service_api(
     from ..search.service import faiss_service
     from ..health.service import health_service
     from ..core.nginx_service import nginx_service
+
+    # Set audit action for server toggle
+    set_audit_action(request, "toggle", "server", resource_id=path, description=f"Toggle server to {new_state}")
 
     logger.info(
         f"API toggle service request from user '{user_context.get('username')}' for path '{path}' to {new_state}"
@@ -3191,6 +3199,7 @@ async def toggle_service_api(
 
 @router.post("/servers/remove")
 async def remove_service_api(
+    request: Request,
     path: Annotated[str, Form()],
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
@@ -3220,6 +3229,9 @@ async def remove_service_api(
     from ..health.service import health_service
     from ..core.nginx_service import nginx_service
     from ..services.scope_service import remove_server_scopes
+
+    # Set audit action for server removal
+    set_audit_action(request, "delete", "server", resource_id=path, description=f"Remove server at {path}")
 
     logger.info(
         f"API remove service request from user '{user_context.get('username')}' for path '{path}'"
@@ -3960,11 +3972,15 @@ async def import_group_definition(
 
 @router.post("/servers/{path:path}/rate")
 async def rate_server(
+    request: Request,
     path: str,
-    request: RatingRequest,
+    rating_request: RatingRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
     """Save integer ratings to server."""
+    # Set audit action for server rating
+    set_audit_action(request, "rate", "server", resource_id=path, description=f"Rate server with {rating_request.rating}")
+    
     if not path.startswith("/"):
         path = "/" + path
 
@@ -3996,7 +4012,7 @@ async def rate_server(
             )
 
     try:
-        avg_rating = await server_service.update_rating(actual_path, user_context["username"], request.rating)
+        avg_rating = await server_service.update_rating(actual_path, user_context["username"], rating_request.rating)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

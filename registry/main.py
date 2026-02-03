@@ -51,6 +51,9 @@ from registry.services.peer_sync_scheduler import get_peer_sync_scheduler
 # Import core configuration
 from registry.core.config import settings
 
+# Import audit logging
+from registry.audit import AuditLogger, add_audit_middleware
+
 # Import version
 from registry.version import __version__
 
@@ -107,6 +110,26 @@ logger.info(f"Logging configured. Writing to file: {log_file_path}")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle management."""
     logger.info("🚀 Starting MCP Gateway Registry...")
+
+    # Initialize audit logger if enabled
+    audit_logger = None
+    if settings.audit_log_enabled:
+        logger.info("📝 Initializing audit logging...")
+        audit_logger = AuditLogger(
+            log_dir=str(settings.audit_log_path),
+            rotation_hours=settings.audit_log_rotation_hours,
+            rotation_max_mb=settings.audit_log_rotation_max_mb,
+            local_retention_hours=settings.audit_log_local_retention_hours,
+            stream_name="registry-api-access",
+        )
+        # Add audit middleware to the app
+        add_audit_middleware(
+            app,
+            audit_logger=audit_logger,
+            log_health_checks=settings.audit_log_health_checks,
+            log_static_assets=settings.audit_log_static_assets,
+        )
+        logger.info(f"✅ Audit logging enabled. Writing to: {settings.audit_log_path}")
 
     try:
         # Load scopes configuration from repository
@@ -256,6 +279,11 @@ async def lifespan(app: FastAPI):
         peer_sync_scheduler = get_peer_sync_scheduler()
         await peer_sync_scheduler.stop()
 
+        # Shutdown audit logger if enabled
+        if audit_logger is not None:
+            logger.info("📝 Closing audit logger...")
+            await audit_logger.close()
+        
         # Shutdown services gracefully
         await health_service.shutdown()
         logger.info("✅ Shutdown completed successfully!")

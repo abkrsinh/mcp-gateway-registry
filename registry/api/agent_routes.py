@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from ..auth.dependencies import nginx_proxied_auth, SCOPES_CONFIG
+from ..audit import set_audit_action
 from ..services.agent_service import agent_service
 from ..schemas.agent_models import (
     AgentCard,
@@ -304,6 +305,7 @@ def _filter_agents_by_access(
 
 @router.post("/agents/register")
 async def register_agent(
+    http_request: Request,
     request: AgentRegistrationRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
@@ -322,6 +324,9 @@ async def register_agent(
     Raises:
         HTTPException: 409 if path exists, 422 if validation fails, 403 if unauthorized
     """
+    # Set audit action for agent registration
+    set_audit_action(http_request, "create", "agent", resource_id=request.path, description=f"Register agent {request.name}")
+    
     ui_permissions = user_context.get("ui_permissions", {})
     publish_permissions = ui_permissions.get("publish_agent", [])
 
@@ -626,11 +631,15 @@ async def check_agent_health(
 
 @router.post("/agents/{path:path}/rate")
 async def rate_agent(
+    request: Request,
     path: str,
-    request: RatingRequest,
+    rating_request: RatingRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
     """Save integer ratings to agent card."""
+    # Set audit action for agent rating
+    set_audit_action(request, "rate", "agent", resource_id=path, description=f"Rate agent with {rating_request.rating}")
+    
     path = _normalize_path(path)
 
     agent_card = await agent_service.get_agent_info(path)
@@ -651,7 +660,7 @@ async def rate_agent(
         )
 
     try:
-        avg_rating = await agent_service.update_rating(path, user_context["username"], request.rating)
+        avg_rating = await agent_service.update_rating(path, user_context["username"], rating_request.rating)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -700,6 +709,7 @@ async def get_agent_rating(
 
 @router.post("/agents/{path:path}/toggle")
 async def toggle_agent(
+    request: Request,
     path: str,
     enabled: bool,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
@@ -720,6 +730,9 @@ async def toggle_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent toggle
+    set_audit_action(request, "toggle", "agent", resource_id=path, description=f"Toggle agent to {enabled}")
+    
     path = _normalize_path(path)
 
     agent_card = await agent_service.get_agent_info(path)
@@ -813,6 +826,7 @@ async def get_agent(
 
 @router.put("/agents/{path:path}")
 async def update_agent(
+    http_request: Request,
     path: str,
     request: AgentRegistrationRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
@@ -834,6 +848,9 @@ async def update_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent update
+    set_audit_action(http_request, "update", "agent", resource_id=path, description=f"Update agent {request.name}")
+    
     path = _normalize_path(path)
 
     existing_agent = await agent_service.get_agent_info(path)
@@ -930,6 +947,7 @@ async def update_agent(
 
 @router.delete("/agents/{path:path}")
 async def delete_agent(
+    request: Request,
     path: str,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
@@ -948,6 +966,9 @@ async def delete_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent deletion
+    set_audit_action(request, "delete", "agent", resource_id=path, description=f"Delete agent at {path}")
+    
     path = _normalize_path(path)
 
     existing_agent = await agent_service.get_agent_info(path)

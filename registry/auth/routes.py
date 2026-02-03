@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 import httpx
 
 from ..core.config import settings
+from ..audit import set_audit_action
 from .dependencies import create_session_cookie, validate_login_credentials
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,9 @@ async def login_submit(
     is_api_call = "application/json" in accept_header
     
     if validate_login_credentials(username, password):
+        # Set audit action for successful login
+        set_audit_action(request, "login", "auth", description=f"User {username} logged in successfully")
+        
         session_data = create_session_cookie(username)
         
         if is_api_call:
@@ -176,6 +180,8 @@ async def login_submit(
         logger.info(f"User '{username}' logged in successfully.")
         return response
     else:
+        # Set audit action for failed login
+        set_audit_action(request, "login_failed", "auth", description=f"Login failed for user {username}")
         logger.info(f"Login failed for user '{username}'.")
         
         if is_api_call:
@@ -200,6 +206,9 @@ async def logout_handler(
     session: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None
 ):
     """Shared logout logic for both GET and POST requests"""
+    # Set audit action for logout
+    set_audit_action(request, "logout", "auth", description="User logged out")
+    
     try:
         # Check if user was logged in via OAuth2
         provider = None

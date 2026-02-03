@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     # Federation settings
     registry_id: Optional[str] = None  # Unique identifier for this registry instance in federation
 
+    # Audit Logging Configuration
+    audit_log_enabled: bool = True  # Enable/disable audit logging globally
+    audit_log_dir: str = "logs/audit"  # Directory for local audit log files
+    audit_log_rotation_hours: int = 1  # Hours between time-based file rotations
+    audit_log_rotation_max_mb: int = 100  # Maximum file size in MB before rotation
+    audit_log_local_retention_hours: int = 1  # Hours to retain local files (default 1 hour, configurable)
+    audit_log_health_checks: bool = False  # Whether to log health check requests
+    audit_log_static_assets: bool = False  # Whether to log static asset requests
+    
+    # Audit Logging MongoDB Configuration
+    audit_log_mongodb_enabled: bool = True  # Enable/disable MongoDB storage for audit logs
+    audit_log_mongodb_ttl_days: int = 7  # Days to retain audit events in MongoDB (default 7 days)
+    
     # Storage Backend Configuration
     storage_backend: str = "file"  # Options: "file", "documentdb"
 
@@ -198,6 +211,13 @@ class Settings(BaseSettings):
         """Path to peer sync state file."""
         home_dir = Path.home()
         return home_dir / "mcp-gateway" / "peer_sync_state.json"
+
+    @property
+    def audit_log_path(self) -> Path:
+        """Get audit log directory based on environment."""
+        if self.is_local_dev:
+            return Path.cwd() / self.audit_log_dir
+        return self.container_log_dir / "audit"
 
 
 class EmbeddingConfig:
