@@ -5,7 +5,11 @@ import AuditLogTable, { AuditEvent } from '../components/AuditLogTable';
 import AuditEventDetail from '../components/AuditEventDetail';
 import { ShieldExclamationIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 
-const AuditLogsPage: React.FC = () => {
+interface AuditLogsPageProps {
+  embedded?: boolean;
+}
+
+const AuditLogsPage: React.FC<AuditLogsPageProps> = ({ embedded = false }) => {
   const { user } = useAuth();
   const [filters, setFilters] = useState<AuditFilters>({
     stream: 'registry_api',
@@ -64,7 +68,7 @@ const AuditLogsPage: React.FC = () => {
   // Check if user is admin
   if (!user?.is_admin) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
+      <div className={embedded ? "flex items-center justify-center p-4" : "min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4"}>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 max-w-md text-center">
           <ShieldExclamationIcon className="h-16 w-16 text-red-500 mx-auto mb-4" />
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
@@ -73,6 +77,77 @@ const AuditLogsPage: React.FC = () => {
           <p className="text-gray-600 dark:text-gray-400">
             You need administrator privileges to view audit logs.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Embedded mode - no outer container
+  if (embedded) {
+    return (
+      <div>
+        {/* Page Header */}
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+              Audit Logs
+            </h2>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              View and search system audit events for compliance and security monitoring.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleExport('jsonl')}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+              title="Export as JSONL"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              <span>JSONL</span>
+            </button>
+            <button
+              onClick={() => handleExport('csv')}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+              title="Export as CSV"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              <span>CSV</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Filter Bar */}
+        <div className="mb-6">
+          <AuditFilterBar
+            filters={filters}
+            onFilterChange={handleFilterChange}
+            onRefresh={handleRefresh}
+          />
+        </div>
+
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Table - takes 2 columns when detail is shown, full width otherwise */}
+          <div className={selectedEvent ? 'lg:col-span-2' : 'lg:col-span-3'}>
+            <AuditLogTable
+              key={refreshKey}
+              filters={filters}
+              onEventSelect={handleEventSelect}
+              selectedEventId={selectedEvent?.request_id}
+            />
+          </div>
+
+          {/* Event Detail Panel */}
+          {selectedEvent && (
+            <div className="lg:col-span-1">
+              <div className="sticky top-8">
+                <AuditEventDetail
+                  event={selectedEvent}
+                  onClose={handleCloseDetail}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

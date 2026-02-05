@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import boto3

@@ -6,9 +6,12 @@ import {
   UsersIcon,
   GlobeAltIcon,
   ArrowLeftIcon,
+  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 import FederationPeers from '../components/FederationPeers';
 import FederationPeerForm from '../components/FederationPeerForm';
+import AuditLogsPage from './AuditLogsPage';
+import { useAuth } from '../contexts/AuthContext';
 
 
 /**
@@ -40,6 +43,7 @@ interface SettingsCategory {
   icon: React.ReactNode;
   items: SettingsItem[];
   disabled?: boolean;
+  adminOnly?: boolean;
 }
 
 
@@ -67,6 +71,15 @@ const SETTINGS_CATEGORIES: SettingsCategory[] = [
       { id: 'peers', label: 'Peers', path: '/settings/federation/peers' },
     ],
   },
+  {
+    id: 'audit',
+    label: 'Audit',
+    icon: <ClipboardDocumentListIcon className="h-5 w-5" />,
+    items: [
+      { id: 'logs', label: 'Audit Logs', path: '/settings/audit/logs' },
+    ],
+    adminOnly: true, // Only visible to admins
+  },
 ];
 
 
@@ -79,6 +92,12 @@ const SETTINGS_CATEGORIES: SettingsCategory[] = [
 const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+
+  // Filter categories based on user permissions
+  const visibleCategories = SETTINGS_CATEGORIES.filter(
+    (category) => !category.adminOnly || user?.is_admin
+  );
 
   // Track which categories are expanded
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
@@ -151,6 +170,11 @@ const SettingsPage: React.FC = () => {
   const renderContent = () => {
     const path = location.pathname;
 
+    // Audit > Logs
+    if (path === '/settings/audit/logs' || path === '/settings/audit') {
+      return <AuditLogsPage embedded />;
+    }
+
     // Federation > Peers list
     if (path === '/settings/federation/peers' || path === '/settings/federation') {
       return <FederationPeers onShowToast={showToast} />;
@@ -213,7 +237,7 @@ const SettingsPage: React.FC = () => {
         <div className="w-64 flex-shrink-0">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
             <nav className="space-y-1">
-              {SETTINGS_CATEGORIES.map((category) => (
+              {visibleCategories.map((category) => (
                 <div key={category.id}>
                   {/* Category header */}
                   <button
