@@ -108,8 +108,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
         Returns:
             Credential type: 'session_cookie', 'bearer_token', or 'none'
         """
-        # Check for session cookie
-        if request.cookies.get("session"):
+        from ..core.config import settings
+        
+        # Check for session cookie (use configured cookie name)
+        if request.cookies.get(settings.session_cookie_name):
             return "session_cookie"
         
         # Check for bearer token
@@ -131,8 +133,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
         Returns:
             Raw credential value (will be masked), or None
         """
-        # Check for session cookie
-        session = request.cookies.get("session")
+        from ..core.config import settings
+        
+        # Check for session cookie (use configured cookie name)
+        session = request.cookies.get(settings.session_cookie_name)
         if session:
             return session  # Will be masked by validator
         

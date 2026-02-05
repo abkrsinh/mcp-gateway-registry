@@ -218,3 +218,112 @@ class RegistryApiAccessRecord(BaseModel):
         default=None,
         description="Authorization decision details"
     )
+
+
+# =============================================================================
+# MCP Server Access Log Models (Phase 4)
+# =============================================================================
+
+
+class MCPServer(BaseModel):
+    """
+    MCP server information for audit logging.
+    
+    Captures details about the target MCP server being accessed
+    through the gateway proxy.
+    """
+    
+    name: str = Field(description="Name of the MCP server")
+    path: str = Field(description="Path/route to the MCP server")
+    version: Optional[str] = Field(
+        default=None,
+        description="Version of the MCP server"
+    )
+    proxy_target: str = Field(description="Target URL the request is proxied to")
+
+
+class MCPRequest(BaseModel):
+    """
+    MCP protocol request information for audit logging.
+    
+    Captures JSON-RPC method details including tool invocations
+    and resource access requests.
+    """
+    
+    method: str = Field(description="JSON-RPC method name (e.g., tools/call, resources/read)")
+    tool_name: Optional[str] = Field(
+        default=None,
+        description="Name of the tool being called (for tools/call method)"
+    )
+    resource_uri: Optional[str] = Field(
+        default=None,
+        description="URI of the resource being accessed (for resources/read method)"
+    )
+    mcp_session_id: Optional[str] = Field(
+        default=None,
+        description="MCP session identifier"
+    )
+    transport: str = Field(
+        default="streamable-http",
+        description="Transport protocol: streamable-http, sse, stdio"
+    )
+    jsonrpc_id: Optional[str] = Field(
+        default=None,
+        description="JSON-RPC request ID"
+    )
+
+
+class MCPResponse(BaseModel):
+    """
+    MCP protocol response information for audit logging.
+    
+    Captures the outcome of an MCP request including success/error
+    status and timing information.
+    """
+    
+    status: str = Field(
+        description="Response status: success, error, timeout"
+    )
+    duration_ms: float = Field(description="Request duration in milliseconds")
+    error_code: Optional[int] = Field(
+        default=None,
+        description="JSON-RPC error code (if status is error)"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        description="Error message (if status is error)"
+    )
+
+
+class MCPServerAccessRecord(BaseModel):
+    """
+    Complete audit record for an MCP server access event.
+    
+    This is the audit log record type for Phase 4,
+    capturing all relevant information about an MCP protocol
+    request proxied through the gateway for compliance and
+    security review.
+    """
+    
+    timestamp: datetime = Field(description="When the event occurred (UTC)")
+    log_type: str = Field(
+        default="mcp_server_access",
+        description="Type of audit log record"
+    )
+    version: str = Field(
+        default="1.0",
+        description="Schema version for this record type"
+    )
+    request_id: str = Field(description="Unique identifier for this request")
+    correlation_id: Optional[str] = Field(
+        default=None,
+        description="Correlation ID for tracing across services"
+    )
+    identity: Identity = Field(description="Identity of the requester")
+    mcp_server: MCPServer = Field(description="Target MCP server details")
+    mcp_request: MCPRequest = Field(description="MCP protocol request details")
+    mcp_response: MCPResponse = Field(description="MCP protocol response details")
+    request: Optional[Request] = Field(
+        default=None,
+        description="HTTP request details (client_ip, forwarded_for, user_agent)"
+    )

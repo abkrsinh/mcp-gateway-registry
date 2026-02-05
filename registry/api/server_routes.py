@@ -254,10 +254,14 @@ async def read_root(
 
 @router.get("/servers")
 async def get_servers_json(
+    request: Request,
     query: str | None = None,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
     """Get servers data as JSON for React frontend and external API (supports both session cookies and Bearer tokens)."""
+    # Set audit action for server list
+    set_audit_action(request, "list", "server", description="List all servers")
+    
     # CRITICAL DIAGNOSTIC: Log user_context received by endpoint
     logger.debug(f"[GET_SERVERS_DEBUG] Received user_context: {user_context}")
     logger.debug(f"[GET_SERVERS_DEBUG] user_context type: {type(user_context)}")
@@ -1665,12 +1669,19 @@ async def token_generation_page(
 
 @router.get("/server_details/{service_path:path}")
 async def get_server_details(
+    request: Request,
     service_path: str, user_context: Annotated[dict, Depends(enhanced_auth)]
 ):
     """Get server details by path, or all servers if path is 'all' (filtered by permissions)."""
     # Normalize the path to ensure it starts with '/'
     if not service_path.startswith("/"):
         service_path = "/" + service_path
+
+    # Set audit action for server read
+    if service_path == "/all":
+        set_audit_action(request, "list", "server", description="List all server details")
+    else:
+        set_audit_action(request, "read", "server", resource_id=service_path, description=f"Read server details for {service_path}")
 
     # Special case: if path is 'all' or '/all', return details for all accessible servers
     if service_path == "/all":

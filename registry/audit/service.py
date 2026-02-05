@@ -3,7 +3,7 @@ AuditLogger service for async writing and file rotation.
 
 This module provides the core audit logging service that writes
 audit events to local JSONL buffer files with time and size-based
-rotation policies.
+rotation policies. Optionally writes to MongoDB for warm storage.
 """
 
 import asyncio
@@ -11,12 +11,15 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import aiofiles
 import aiofiles.os
 
 from .models import RegistryApiAccessRecord
+
+if TYPE_CHECKING:
+    from ..repositories.audit_repository import AuditRepositoryBase
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,8 @@ class AuditLogger:
         rotation_max_mb: int = 100,
         local_retention_hours: int = 24,
         stream_name: str = "registry-api-access",
+        mongodb_enabled: bool = False,
+        audit_repository: Optional["AuditRepositoryBase"] = None,
     ):
         """
         Initialize the AuditLogger.
@@ -53,12 +58,16 @@ class AuditLogger:
             rotation_max_mb: Maximum file size in MB before rotation
             local_retention_hours: Hours to retain local files before cleanup
             stream_name: Name of the audit stream for filename prefix
+            mongodb_enabled: Whether to write audit events to MongoDB
+            audit_repository: Repository for MongoDB writes (required if mongodb_enabled)
         """
         self.log_dir = Path(log_dir)
         self.rotation_hours = rotation_hours
         self.rotation_max_bytes = rotation_max_mb * 1024 * 1024
         self.local_retention_hours = local_retention_hours
         self.stream_name = stream_name
+        self.mongodb_enabled = mongodb_enabled
+        self._audit_repository = audit_repository
         
         # Current file state
         self._current_file: Optional[aiofiles.threadpool.binary.AsyncBufferedIOBase] = None
@@ -76,14 +85,16 @@ class AuditLogger:
         record: Union[RegistryApiAccessRecord, "MCPServerAccessRecord"],
     ) -> None:
         """
-        Write an audit record to the current buffer file.
+        Write an audit record to the current buffer file and optionally MongoDB.
         
         This method is thread-safe and handles file rotation automatically.
         Records are written as JSON Lines (one JSON object per line).
+        If MongoDB is enabled, records are also written to MongoDB for warm storage.
         
         Args:
             record: The audit record to log (RegistryApiAccessRecord or MCPServerAccessRecord)
         """
+        # Write to local file
         async with self._lock:
             try:
                 await self._ensure_file_open()
@@ -97,8 +108,16 @@ class AuditLogger:
                 await self._current_file.flush()
                 
             except Exception as e:
-                logger.error(f"Failed to write audit event: {e}")
+                logger.error(f"Failed to write audit event to file: {e}")
                 # Don't raise - audit logging should not break request processing
+        
+        # Write to MongoDB (if enabled)
+        if self.mongodb_enabled and self._audit_repository:
+            try:
+                await self._audit_repository.insert(record)
+            except Exception as e:
+                logger.error(f"Failed to write audit event to MongoDB: {e}")
+                # Fall back to local file only - don't raise
     
     async def _ensure_file_open(self) -> None:
         """

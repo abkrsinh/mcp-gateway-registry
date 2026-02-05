@@ -11,7 +11,8 @@ import {
   ChevronUpIcon,
   ClipboardIcon,
   CheckIcon,
-  ArrowDownTrayIcon
+  ArrowDownTrayIcon,
+  ClipboardDocumentListIcon
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import axios from 'axios';
@@ -309,6 +310,28 @@ const fetchAdminTokens = async () => {
 
           {/* Filters Section */}
           <div className="flex-1 p-4 md:p-6">
+            {/* Admin Links */}
+            {user?.is_admin && (
+              <div className="mb-6">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                  Admin
+                </div>
+                <Link
+                  to="/audit-logs"
+                  className={`flex items-center space-x-3 px-3 py-2 rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                    location.pathname === '/audit-logs'
+                      ? 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
+                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => window.innerWidth < 768 && setSidebarOpen(false)}
+                  tabIndex={0}
+                >
+                  <ClipboardDocumentListIcon className="h-4 w-4" />
+                  <span>Audit Logs</span>
+                </Link>
+              </div>
+            )}
+
             <div className="flex items-center space-x-2 mb-4">
               <FunnelIcon className="h-4 w-4 text-gray-600 dark:text-gray-400" />
               <h3 className="text-sm font-medium text-gray-900 dark:text-white">Filter Services</h3>

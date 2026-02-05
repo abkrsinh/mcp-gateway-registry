@@ -416,11 +416,13 @@ def web_auth(
 
 
 async def enhanced_auth(
+    request: Request,
     session: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
 ) -> dict[str, Any]:
     """
     Enhanced authentication dependency that returns full user context.
     Returns username, groups, scopes, and permission flags.
+    Also sets request.state.user_context for audit logging middleware.
     """
     session_data = get_user_session_data(session)
 
@@ -478,6 +480,9 @@ async def enhanced_auth(
         "can_modify_servers": can_modify,
         "is_admin": await user_has_wildcard_access(scopes),
     }
+
+    # Set user context on request state for audit logging middleware
+    request.state.user_context = user_context
 
     logger.debug(f"Enhanced auth context for {username}: {user_context}")
     return user_context
@@ -619,6 +624,9 @@ async def nginx_proxied_auth(
             "is_admin": is_admin,
         }
 
+        # Set user context on request state for audit logging middleware
+        request.state.user_context = user_context
+
         logger.debug(f"nginx-proxied auth context for {username}: {user_context}")
         return user_context
 
@@ -631,7 +639,7 @@ async def nginx_proxied_auth(
     )
     logger.info(f"[NGINX_AUTH_FALLBACK] Request path: {request.url.path}")
     try:
-        return await enhanced_auth(session)
+        return await enhanced_auth(request, session)
     except HTTPException as e:
         logger.error(
             f"[NGINX_AUTH_FALLBACK] enhanced_auth raised HTTPException: status={e.status_code}, detail={e.detail}"

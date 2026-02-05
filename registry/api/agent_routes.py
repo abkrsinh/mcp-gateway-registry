@@ -479,6 +479,9 @@ async def list_agents(
     Returns:
         List of agent info objects
     """
+    # Set audit action for agent list
+    set_audit_action(request, "list", "agent", description="List all agents")
+    
     # CRITICAL DIAGNOSTIC: Log that we reached this endpoint
     logger.info(f"[GET_AGENTS_ENTRY] GET /api/agents called from {request.client.host if request.client else 'unknown'}")
     logger.info(f"[GET_AGENTS_ENTRY] Request headers: {dict(request.headers)}")
@@ -775,6 +778,7 @@ async def toggle_agent(
 
 @router.get("/agents/{path:path}")
 async def get_agent(
+    request: Request,
     path: str,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
@@ -785,6 +789,7 @@ async def get_agent(
     Private and group-restricted agents require authorization.
 
     Args:
+        request: HTTP request object
         path: Agent path
         user_context: Authenticated user context
 
@@ -795,6 +800,9 @@ async def get_agent(
         HTTPException: 404 if not found, 403 if not authorized
     """
     path = _normalize_path(path)
+    
+    # Set audit action for agent read
+    set_audit_action(request, "read", "agent", resource_id=path, description=f"Read agent {path}")
 
     agent_card = await agent_service.get_agent_info(path)
     if not agent_card:

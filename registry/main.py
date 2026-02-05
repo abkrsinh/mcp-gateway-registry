@@ -31,6 +31,7 @@ from registry.api.federation_routes import router as federation_router
 from registry.api.federation_export_routes import router as federation_export_router
 from registry.api.peer_management_routes import router as peer_management_router
 from registry.health.routes import router as health_router
+from registry.audit.routes import router as audit_router
 
 # Import auth dependencies
 from registry.auth.dependencies import (
@@ -111,24 +112,9 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle management."""
     logger.info("🚀 Starting MCP Gateway Registry...")
 
-    # Initialize audit logger if enabled
-    audit_logger = None
-    if settings.audit_log_enabled:
-        logger.info("📝 Initializing audit logging...")
-        audit_logger = AuditLogger(
-            log_dir=str(settings.audit_log_path),
-            rotation_hours=settings.audit_log_rotation_hours,
-            rotation_max_mb=settings.audit_log_rotation_max_mb,
-            local_retention_hours=settings.audit_log_local_retention_hours,
-            stream_name="registry-api-access",
-        )
-        # Add audit middleware to the app
-        add_audit_middleware(
-            app,
-            audit_logger=audit_logger,
-            log_health_checks=settings.audit_log_health_checks,
-            log_static_assets=settings.audit_log_static_assets,
-        )
+    # Initialize audit logger reference (middleware added at module level)
+    audit_logger = getattr(app.state, 'audit_logger', None)
+    if audit_logger:
         logger.info(f"✅ Audit logging enabled. Writing to: {settings.audit_log_path}")
 
     try:
@@ -337,6 +323,10 @@ app = FastAPI(
         {
             "name": "peer-management",
             "description": "Peer registry management API for configuring and synchronizing with peer registries. Requires JWT Bearer token authentication."
+        },
+        {
+            "name": "Audit Logs",
+            "description": "Audit log viewing and export endpoints. Requires admin permissions."
         }
     ]
 )
@@ -350,6 +340,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add audit middleware if enabled (must be added before app starts)
+if settings.audit_log_enabled:
+    logger.info("📝 Initializing audit logging...")
+    
+    # Get audit repository if MongoDB is enabled
+    _audit_repository = None
+    _mongodb_enabled = settings.audit_log_mongodb_enabled and settings.storage_backend in ("documentdb", "mongodb-ce")
+    if _mongodb_enabled:
+        from registry.repositories.factory import get_audit_repository
+        _audit_repository = get_audit_repository()
+        if _audit_repository:
+            logger.info("📊 MongoDB audit storage enabled")
+        else:
+            logger.warning("⚠️ MongoDB audit storage requested but repository unavailable")
+            _mongodb_enabled = False
+    
+    _audit_logger = AuditLogger(
+        log_dir=str(settings.audit_log_path),
+        rotation_hours=settings.audit_log_rotation_hours,
+        rotation_max_mb=settings.audit_log_rotation_max_mb,
+        local_retention_hours=settings.audit_log_local_retention_hours,
+        stream_name="registry-api-access",
+        mongodb_enabled=_mongodb_enabled,
+        audit_repository=_audit_repository,
+    )
+    # Store audit logger in app state for lifespan access
+    app.state.audit_logger = _audit_logger
+    
+    # Add audit middleware to the app
+    add_audit_middleware(
+        app,
+        audit_logger=_audit_logger,
+        log_health_checks=settings.audit_log_health_checks,
+        log_static_assets=settings.audit_log_static_assets,
+    )
+
 # Register API routers with /api prefix
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(servers_router, prefix="/api", tags=["Server Management"])
@@ -360,6 +386,7 @@ app.include_router(federation_router, prefix="/api", tags=["federation"])
 app.include_router(health_router, prefix="/api/health", tags=["Health Monitoring"])
 app.include_router(federation_export_router)
 app.include_router(peer_management_router)
+app.include_router(audit_router, prefix="/api", tags=["Audit Logs"])
 
 # Register Anthropic MCP Registry API (public API for MCP servers only)
 app.include_router(registry_router, tags=["Anthropic Registry API"])

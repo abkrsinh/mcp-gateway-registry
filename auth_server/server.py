@@ -45,6 +45,11 @@ sys.path.insert(0, "/app")
 from registry.common.scopes_loader import reload_scopes_config
 from registry.repositories.factory import get_scope_repository
 
+# Import MCP audit logging components
+from registry.audit.mcp_logger import MCPLogger
+from registry.audit.service import AuditLogger
+from registry.audit.models import Identity, MCPServer
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,  # Set the log level to INFO
@@ -1132,6 +1137,13 @@ async def validate_request(request: Request):
         HTTPException: If the token is missing, invalid, or configuration is incomplete
     """
 
+    
+    # Capture start time for MCP audit logging
+    import uuid
+    start_time = time.perf_counter()
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    mcp_session_id = request.headers.get("Mcp-Session-Id")
+    
     try:
         # Extract headers
         # Check for X-Authorization first (custom header used by this gateway)
@@ -1544,6 +1556,50 @@ async def validate_request(request: Request):
         }
         logger.info(f"Full validation result: {json.dumps(_mask_sensitive_dict(validation_result), indent=2)}")
         logger.info(f"Response data being sent: {json.dumps(response_data, indent=2)}")
+        
+        # Log MCP server access event if this is an MCP request (has server_name)
+        if server_name:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            mcp_logger = get_mcp_logger()
+            if mcp_logger:
+                try:
+                    # Build identity from validation result
+                    identity = Identity(
+                        username=validation_result.get('username') or 'anonymous',
+                        auth_method=validation_result.get('method') or 'unknown',
+                        provider=validation_result.get('provider'),
+                        groups=validation_result.get('groups', []),
+                        scopes=user_scopes,
+                        is_admin=validation_result.get('is_admin', False),
+                        credential_type='bearer_token' if authorization else 'session_cookie',
+                    )
+                    
+                    # Build MCP server info
+                    mcp_server = MCPServer(
+                        name=server_name,
+                        path=f"/{server_name}" if server_name else "/",
+                        proxy_target=original_url or "",
+                    )
+                    
+                    # Log the MCP access event
+                    await mcp_logger.log_mcp_access(
+                        request_id=request_id,
+                        identity=identity,
+                        mcp_server=mcp_server,
+                        request_body=body.encode('utf-8') if body else b'',
+                        response_status='success',
+                        duration_ms=duration_ms,
+                        mcp_session_id=mcp_session_id,
+                        transport='streamable-http',  # Default, could be extracted from request
+                        client_ip=request.client.host if request.client else 'unknown',
+                        forwarded_for=request.headers.get("X-Forwarded-For"),
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                    logger.debug(f"MCP access logged for {server_name}")
+                except Exception as e:
+                    # Don't fail the request if logging fails
+                    logger.warning(f"Failed to log MCP access event: {e}")
+        
         # Create JSON response with headers that nginx can use
         response = JSONResponse(content=response_data, status_code=200)
 
@@ -1560,6 +1616,38 @@ async def validate_request(request: Request):
 
     except ValueError as e:
         logger.warning(f"Token validation failed: {e}")
+        # Log failed MCP access attempt
+        if server_name_from_url:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            mcp_logger = get_mcp_logger()
+            if mcp_logger:
+                try:
+                    identity = Identity(
+                        username='anonymous',
+                        auth_method='unknown',
+                        credential_type='none',
+                    )
+                    mcp_server = MCPServer(
+                        name=server_name_from_url,
+                        path=f"/{server_name_from_url}",
+                        proxy_target=original_url or "",
+                    )
+                    await mcp_logger.log_mcp_access(
+                        request_id=request_id,
+                        identity=identity,
+                        mcp_server=mcp_server,
+                        request_body=body.encode('utf-8') if body else b'',
+                        response_status='error',
+                        duration_ms=duration_ms,
+                        mcp_session_id=mcp_session_id,
+                        error_code=401,
+                        error_message=str(e),
+                        client_ip=request.client.host if request.client else 'unknown',
+                        forwarded_for=request.headers.get("X-Forwarded-For"),
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log MCP access error: {log_err}")
         raise HTTPException(
             status_code=401,
             detail=str(e),
@@ -2060,6 +2148,51 @@ if not SECRET_KEY:
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
 
+# Initialize MCP audit logger for logging MCP server access events
+# This logs all MCP requests that pass through the auth validation
+_mcp_audit_logger = None
+_mcp_logger = None
+_mcp_audit_repository = None
+
+def get_mcp_logger() -> Optional[MCPLogger]:
+    """Get or initialize the MCP logger instance."""
+    global _mcp_audit_logger, _mcp_logger, _mcp_audit_repository
+    
+    if _mcp_logger is None:
+        try:
+            # Check if MCP audit logging is enabled via settings
+            if settings.audit_log_enabled:
+                # Initialize MongoDB repository if MongoDB is enabled
+                audit_repository = None
+                mongodb_enabled = getattr(settings, 'audit_log_mongodb_enabled', False)
+                if mongodb_enabled:
+                    try:
+                        from registry.repositories.audit_repository import DocumentDBAuditRepository
+                        _mcp_audit_repository = DocumentDBAuditRepository()
+                        audit_repository = _mcp_audit_repository
+                        logger.info("MCP audit MongoDB repository initialized")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize MCP audit MongoDB repository: {e}")
+                        mongodb_enabled = False
+                
+                _mcp_audit_logger = AuditLogger(
+                    log_dir=settings.audit_log_dir,
+                    rotation_hours=settings.audit_log_rotation_hours,
+                    rotation_max_mb=settings.audit_log_rotation_max_mb,
+                    local_retention_hours=settings.audit_log_local_retention_hours,
+                    stream_name="mcp-server-access",
+                    mongodb_enabled=mongodb_enabled,
+                    audit_repository=audit_repository,
+                )
+                _mcp_logger = MCPLogger(_mcp_audit_logger)
+                logger.info(f"MCP audit logger initialized successfully (MongoDB: {mongodb_enabled})")
+            else:
+                logger.info("MCP audit logging is disabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize MCP audit logger: {e}")
+            _mcp_logger = None
+    
+    return _mcp_logger
 
 def get_enabled_providers():
     """Get list of enabled OAuth2 providers, filtered by AUTH_PROVIDER env var if set"""
