@@ -3,15 +3,16 @@
 import json
 import logging
 import time
+from datetime import UTC
 from enum import Enum
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from ..auth.dependencies import enhanced_auth
-from ..core.config import settings, DeploymentMode, RegistryMode
-from ..core.metrics import CONFIG_VIEW_REQUESTS, CONFIG_EXPORT_REQUESTS
+from ..core.config import DeploymentMode, RegistryMode, settings
+from ..core.metrics import CONFIG_EXPORT_REQUESTS, CONFIG_VIEW_REQUESTS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,7 +21,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Rate limiting state (in-memory sliding window, per-user)
 # ---------------------------------------------------------------------------
-_rate_limit_cache: Dict[str, List[float]] = {}
+_rate_limit_cache: dict[str, list[float]] = {}
 RATE_LIMIT_REQUESTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
 
@@ -29,7 +30,7 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 # Configuration group definitions — 11 groups, ordered 1-11
 # Each field tuple: (settings_attr_name, display_label, is_sensitive)
 # ---------------------------------------------------------------------------
-CONFIG_GROUPS: Dict[str, Dict[str, Any]] = {
+CONFIG_GROUPS: dict[str, dict[str, Any]] = {
     "deployment": {
         "title": "Deployment Mode",
         "order": 1,
@@ -194,7 +195,7 @@ def _format_value(
     field_name: str,
     value: Any,
     is_sensitive: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Format a configuration value for the API response.
 
     Returns dict with keys: raw, display, is_masked, unit.
@@ -255,22 +256,35 @@ def _get_field_value(field_name: str) -> Any:
 # Rate limiter (in-memory sliding window)
 # ---------------------------------------------------------------------------
 
+
+RATE_LIMIT_MAX_USERS = 1000
+
+
 def _check_rate_limit(user_id: str) -> bool:
     """Return True if the request is within the rate limit, False otherwise.
 
     Uses a per-user sliding window of RATE_LIMIT_WINDOW_SECONDS with a max
-    of RATE_LIMIT_REQUESTS.
+    of RATE_LIMIT_REQUESTS. Periodically prunes stale user entries to prevent
+    unbounded memory growth.
     """
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW_SECONDS
+
+    # Periodic cleanup: if cache grows too large, remove stale users
+    if len(_rate_limit_cache) > RATE_LIMIT_MAX_USERS:
+        stale_users = [
+            uid
+            for uid, timestamps in _rate_limit_cache.items()
+            if not timestamps or timestamps[-1] <= window_start
+        ]
+        for uid in stale_users:
+            del _rate_limit_cache[uid]
 
     if user_id not in _rate_limit_cache:
         _rate_limit_cache[user_id] = []
 
     # Prune timestamps outside the window
-    _rate_limit_cache[user_id] = [
-        t for t in _rate_limit_cache[user_id] if t > window_start
-    ]
+    _rate_limit_cache[user_id] = [t for t in _rate_limit_cache[user_id] if t > window_start]
 
     if len(_rate_limit_cache[user_id]) >= RATE_LIMIT_REQUESTS:
         return False
@@ -282,12 +296,12 @@ def _check_rate_limit(user_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Response cache (60-second TTL)
 # ---------------------------------------------------------------------------
-_config_cache: Dict[str, Any] = {}
+_config_cache: dict[str, Any] = {}
 _config_cache_time: float = 0
 CONFIG_CACHE_TTL_SECONDS = 60
 
 
-def _get_cached_config_response() -> Dict[str, Any]:
+def _get_cached_config_response() -> dict[str, Any]:
     """Return cached config response, rebuilding if TTL has expired."""
     global _config_cache, _config_cache_time
 
@@ -300,7 +314,7 @@ def _get_cached_config_response() -> Dict[str, Any]:
     return _config_cache
 
 
-def _build_config_response() -> Dict[str, Any]:
+def _build_config_response() -> dict[str, Any]:
     """Build the full configuration response with grouped settings."""
     groups = []
 
@@ -314,21 +328,25 @@ def _build_config_response() -> Dict[str, Any]:
             actual_sensitive = is_sensitive or _is_sensitive_field(field_name)
             formatted = _format_value(field_name, value, actual_sensitive)
 
-            fields.append({
-                "key": field_name,
-                "label": display_name,
-                "value": formatted["display"],
-                "raw_value": formatted["raw"],
-                "is_masked": formatted["is_masked"],
-                "unit": formatted["unit"],
-            })
+            fields.append(
+                {
+                    "key": field_name,
+                    "label": display_name,
+                    "value": formatted["display"],
+                    "raw_value": formatted["raw"],
+                    "is_masked": formatted["is_masked"],
+                    "unit": formatted["unit"],
+                }
+            )
 
-        groups.append({
-            "id": group_id,
-            "title": group_def["title"],
-            "order": group_def["order"],
-            "fields": fields,
-        })
+        groups.append(
+            {
+                "id": group_id,
+                "title": group_def["title"],
+                "order": group_def["order"],
+                "fields": fields,
+            }
+        )
 
     return {
         "groups": groups,
@@ -341,6 +359,7 @@ def _build_config_response() -> Dict[str, Any]:
 # GET /api/config/full — admin-only full configuration view
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/full",
     summary="Get full registry configuration",
@@ -349,7 +368,7 @@ def _build_config_response() -> Dict[str, Any]:
 async def get_full_config(
     request: Request,
     user_context: Annotated[dict, Depends(enhanced_auth)],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get full configuration with grouped parameters."""
     if not user_context.get("is_admin", False):
         raise HTTPException(
@@ -379,18 +398,23 @@ async def get_full_config(
     audit_logger = getattr(request.app.state, "audit_logger", None)
     if audit_logger:
         try:
-            from ..audit.models import (
-                RegistryApiAccessRecord,
-                Identity,
-                Request as AuditRequest,
-                Response as AuditResponse,
-                Action,
-            )
-            from datetime import datetime, timezone
             import uuid
+            from datetime import datetime
+
+            from ..audit.models import (
+                Action,
+                Identity,
+                RegistryApiAccessRecord,
+            )
+            from ..audit.models import (
+                Request as AuditRequest,
+            )
+            from ..audit.models import (
+                Response as AuditResponse,
+            )
 
             record = RegistryApiAccessRecord(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 request_id=str(uuid.uuid4()),
                 identity=Identity(
                     username=username,
@@ -421,12 +445,13 @@ async def get_full_config(
 # Existing endpoint (unchanged)
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "",
     summary="Get registry configuration",
     description="Returns the current deployment mode, registry mode, and enabled features",
 )
-async def get_config() -> Dict[str, Any]:
+async def get_config() -> dict[str, Any]:
     """Get current registry configuration."""
     return {
         "deployment_mode": settings.deployment_mode.value,
@@ -435,10 +460,8 @@ async def get_config() -> Dict[str, Any]:
         "features": {
             "mcp_servers": settings.registry_mode
             in (RegistryMode.FULL, RegistryMode.MCP_SERVERS_ONLY),
-            "agents": settings.registry_mode
-            in (RegistryMode.FULL, RegistryMode.AGENTS_ONLY),
-            "skills": settings.registry_mode
-            in (RegistryMode.FULL, RegistryMode.SKILLS_ONLY),
+            "agents": settings.registry_mode in (RegistryMode.FULL, RegistryMode.AGENTS_ONLY),
+            "skills": settings.registry_mode in (RegistryMode.FULL, RegistryMode.SKILLS_ONLY),
             "federation": settings.registry_mode == RegistryMode.FULL,
             "gateway_proxy": settings.deployment_mode == DeploymentMode.WITH_GATEWAY,
         },
@@ -468,13 +491,15 @@ def _export_as_env(include_sensitive: bool = False) -> str:
     lines = [
         "# MCP Gateway Registry Configuration",
         f"# Exported: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
-        "# WARNING: Sensitive values are masked unless explicitly included",
-        "",
     ]
+    if include_sensitive:
+        lines.append("# SECURITY WARNING: This file contains unmasked sensitive values.")
+        lines.append("# Do not commit, share, or store this file in an insecure location.")
+    else:
+        lines.append("# WARNING: Sensitive values are masked unless explicitly included")
+    lines.append("")
 
-    for group_id, group_def in sorted(
-        CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]
-    ):
+    for group_id, group_def in sorted(CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]):
         lines.append(f"# === {group_def['title']} ===")
         for field_name, _display_name, is_sensitive in group_def["fields"]:
             value = _get_field_value(field_name)
@@ -502,9 +527,9 @@ def _export_as_json(include_sensitive: bool = False) -> str:
 
     Uses json.dumps with default=str for non-serialisable types.
     """
-    config: Dict[str, Dict[str, Any]] = {}
+    config: dict[str, dict[str, Any]] = {}
     for group_id, group_def in CONFIG_GROUPS.items():
-        group_config: Dict[str, Any] = {}
+        group_config: dict[str, Any] = {}
         for field_name, _display_name, is_sensitive in group_def["fields"]:
             value = _get_field_value(field_name)
             sensitive = is_sensitive or _is_sensitive_field(field_name)
@@ -515,13 +540,20 @@ def _export_as_json(include_sensitive: bool = False) -> str:
                 group_config[field_name] = value
         config[group_id] = group_config
 
+    metadata: dict[str, Any] = {
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "registry_mode": settings.registry_mode.value,
+        "includes_sensitive": include_sensitive,
+    }
+    if include_sensitive:
+        metadata["security_warning"] = (
+            "This export contains unmasked sensitive values. "
+            "Do not commit, share, or store in an insecure location."
+        )
+
     return json.dumps(
         {
-            "_metadata": {
-                "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "registry_mode": settings.registry_mode.value,
-                "includes_sensitive": include_sensitive,
-            },
+            "_metadata": metadata,
             "configuration": config,
         },
         indent=2,
@@ -538,12 +570,13 @@ def _export_as_tfvars(include_sensitive: bool = False) -> str:
     lines = [
         "# MCP Gateway Registry - Terraform Variables",
         f"# Exported: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
-        "",
     ]
+    if include_sensitive:
+        lines.append("# SECURITY WARNING: This file contains unmasked sensitive values.")
+        lines.append("# Do not commit, share, or store this file in an insecure location.")
+    lines.append("")
 
-    for group_id, group_def in sorted(
-        CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]
-    ):
+    for group_id, group_def in sorted(CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]):
         lines.append(f"# {group_def['title']}")
         for field_name, _display_name, is_sensitive in group_def["fields"]:
             value = _get_field_value(field_name)
@@ -581,18 +614,21 @@ def _export_as_yaml(include_sensitive: bool = False) -> str:
     lines = [
         "# MCP Gateway Registry Configuration",
         f"# Exported: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
-        "",
+    ]
+    if include_sensitive:
+        lines.append("# SECURITY WARNING: This file contains unmasked sensitive values.")
+        lines.append("# Do not commit, share, or store this file in an insecure location.")
+    lines.append("")
+    lines.extend([
         "metadata:",
         f"  exported_at: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
         f"  registry_mode: {settings.registry_mode.value}",
         f"  includes_sensitive: {str(include_sensitive).lower()}",
         "",
         "configuration:",
-    ]
+    ])
 
-    for group_id, group_def in sorted(
-        CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]
-    ):
+    for group_id, group_def in sorted(CONFIG_GROUPS.items(), key=lambda x: x[1]["order"]):
         lines.append(f"  # {group_def['title']}")
         lines.append(f"  {group_id}:")
         for field_name, _display_name, is_sensitive in group_def["fields"]:
@@ -701,18 +737,23 @@ async def export_config(
     audit_logger = getattr(request.app.state, "audit_logger", None)
     if audit_logger:
         try:
-            from ..audit.models import (
-                RegistryApiAccessRecord,
-                Identity,
-                Request as AuditRequest,
-                Response as AuditResponse,
-                Action,
-            )
-            from datetime import datetime, timezone
             import uuid
+            from datetime import datetime
+
+            from ..audit.models import (
+                Action,
+                Identity,
+                RegistryApiAccessRecord,
+            )
+            from ..audit.models import (
+                Request as AuditRequest,
+            )
+            from ..audit.models import (
+                Response as AuditResponse,
+            )
 
             record = RegistryApiAccessRecord(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 request_id=str(uuid.uuid4()),
                 identity=Identity(
                     username=username,
