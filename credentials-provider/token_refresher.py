@@ -778,8 +778,8 @@ def _generate_vscode_config(
         if 'temp_path' in locals():
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to clean up temp file: {e}")
         return False
 
 
@@ -855,8 +855,8 @@ def _generate_roocode_config(
         if 'temp_path' in locals():
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to clean up temp file: {e}")
         return False
 
 
@@ -1105,8 +1105,8 @@ Examples:
                         logger.error(f"Another token refresher instance is already running (PID: {existing_pid})")
                         logger.error("Use --no-kill flag to prevent automatic killing, or stop the existing instance first")
                         sys.exit(1)
-                except:
-                    pass  # Invalid PID file, continue
+                except Exception as e:
+                    logger.debug(f"Invalid PID file, continuing: {e}")
         else:
             # Kill existing instance if found
             killed = _kill_existing_instance()

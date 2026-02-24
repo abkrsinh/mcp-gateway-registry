@@ -1173,8 +1173,8 @@ class RegistryClient:
                 try:
                     error_detail = response.json()
                     logger.error(f"Validation error details: {json.dumps(error_detail, indent=2)}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not parse 422 error response as JSON: {e}")
             raise
         return response
 

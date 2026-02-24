@@ -223,8 +223,8 @@ class HealthMonitoringService:
         for conn in connections:
             try:
                 close_tasks.append(conn.close())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing WebSocket connection during shutdown: {e}")
                 
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)

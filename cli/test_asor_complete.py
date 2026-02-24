@@ -103,8 +103,8 @@ def test_agent_definition_crud(token):
                 print("   " + "="*50)
                 print(json.dumps(agent, indent=2))
                 print("   " + "="*50)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Failed to parse agent list response: {e}")
     else:
         print(f"❌ Failed: {status} - {response[:200]}")
 

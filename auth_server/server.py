@@ -1028,9 +1028,9 @@ class SimplifiedCognitoValidator:
             if unverified_claims.get("iss") == JWT_ISSUER:
                 logger.debug("Token appears to be self-signed, validating...")
                 return self.validate_self_signed_token(access_token)
-        except Exception:
+        except Exception as e:
             # Not our token or malformed, continue to Cognito validation
-            pass
+            logger.debug(f"Token is not self-signed or malformed, falling back to Cognito: {e}")
 
         # Try JWT validation with Cognito
         try:
