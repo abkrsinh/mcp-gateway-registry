@@ -22,7 +22,8 @@ resource "aws_iam_policy" "ecs_secrets_access" {
           ],
           var.documentdb_credentials_secret_arn != "" ? [var.documentdb_credentials_secret_arn] : [],
           var.entra_enabled ? [aws_secretsmanager_secret.entra_client_secret[0].arn] : [],
-          var.enable_observability ? [aws_secretsmanager_secret.metrics_api_key[0].arn] : []
+          var.enable_observability ? [aws_secretsmanager_secret.metrics_api_key[0].arn] : [],
+          var.enable_observability && var.otel_otlp_endpoint != "" ? [aws_secretsmanager_secret.otlp_exporter_headers[0].arn] : []
         )
       }
     ]

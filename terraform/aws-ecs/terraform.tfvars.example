@@ -395,3 +395,23 @@ deployment_mode = "registry-only"
 # Can also be set via environment variable:
 #   export TF_VAR_grafana_admin_password="your-secure-password"
 grafana_admin_password = "CHANGE-ME-SET-STRONG-PASSWORD"
+
+# OTLP exporter for pushing metrics to external platforms (Datadog, New Relic, etc.)
+# Leave empty/commented to disable (only Prometheus/AMP pipeline will be active)
+# The headers value is stored in AWS Secrets Manager (not in the ECS task definition)
+#
+# Datadog example:
+#   otel_otlp_endpoint         = "https://otlp.datadoghq.com"
+#   otel_exporter_otlp_headers = "dd-api-key=YOUR_DATADOG_API_KEY"
+#
+# New Relic example:
+#   otel_otlp_endpoint         = "https://otlp.nr-data.net"
+#   otel_exporter_otlp_headers = "api-key=YOUR_NEW_RELIC_LICENSE_KEY"
+#
+# RECOMMENDED: Set the headers via environment variable for security:
+#   export TF_VAR_otel_exporter_otlp_headers="dd-api-key=YOUR_KEY"
+#
+# Export interval in milliseconds (default: 30000 = 30 seconds)
+# otel_otlp_export_interval_ms = 30000
+# otel_otlp_endpoint           = ""
+# otel_exporter_otlp_headers   = ""

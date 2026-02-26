@@ -135,3 +135,22 @@ resource "aws_secretsmanager_secret_version" "metrics_api_key" {
   secret_id     = aws_secretsmanager_secret.metrics_api_key[0].id
   secret_string = random_password.metrics_api_key[0].result
 }
+
+
+# OTLP exporter headers (e.g., dd-api-key=xxx for Datadog)
+# Only created when observability is enabled AND an OTLP endpoint is configured
+resource "aws_secretsmanager_secret" "otlp_exporter_headers" {
+  count = var.enable_observability && var.otel_otlp_endpoint != "" ? 1 : 0
+
+  name_prefix             = "${local.name_prefix}-otlp-exporter-headers-"
+  description             = "OTLP exporter authentication headers (e.g., Datadog API key)"
+  recovery_window_in_days = 0
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "otlp_exporter_headers" {
+  count = var.enable_observability && var.otel_otlp_endpoint != "" ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.otlp_exporter_headers[0].id
+  secret_string = var.otel_exporter_otlp_headers
+}

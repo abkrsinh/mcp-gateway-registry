@@ -591,3 +591,22 @@ variable "grafana_admin_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "otel_otlp_endpoint" {
+  description = "OTLP endpoint for pushing metrics to an external platform (e.g., Datadog). Leave empty to disable."
+  type        = string
+  default     = ""
+}
+
+variable "otel_exporter_otlp_headers" {
+  description = "Headers for OTLP exporter (e.g., 'dd-api-key=YOUR_KEY' for Datadog). Stored in Secrets Manager. Leave empty if not needed."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "otel_otlp_export_interval_ms" {
+  description = "OTLP export interval in milliseconds. Default 30000 (30 seconds)."
+  type        = number
+  default     = 30000
+}

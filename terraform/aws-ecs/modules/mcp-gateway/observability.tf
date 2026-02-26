@@ -181,23 +181,39 @@ module "ecs_service_metrics" {
         {
           name  = "METRICS_RETENTION_DAYS"
           value = "7"
+        },
+        {
+          name  = "OTEL_OTLP_ENDPOINT"
+          value = var.otel_otlp_endpoint
+        },
+        {
+          name  = "OTEL_OTLP_EXPORT_INTERVAL_MS"
+          value = tostring(var.otel_otlp_export_interval_ms)
         }
       ]
 
-      secrets = [
-        {
-          name      = "METRICS_API_KEY_REGISTRY"
-          valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
-        },
-        {
-          name      = "METRICS_API_KEY_AUTH"
-          valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
-        },
-        {
-          name      = "METRICS_API_KEY_MCPGW"
-          valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
-        }
-      ]
+      secrets = concat(
+        [
+          {
+            name      = "METRICS_API_KEY_REGISTRY"
+            valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
+          },
+          {
+            name      = "METRICS_API_KEY_AUTH"
+            valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
+          },
+          {
+            name      = "METRICS_API_KEY_MCPGW"
+            valueFrom = aws_secretsmanager_secret.metrics_api_key[0].arn
+          }
+        ],
+        var.otel_otlp_endpoint != "" ? [
+          {
+            name      = "OTEL_EXPORTER_OTLP_HEADERS"
+            valueFrom = aws_secretsmanager_secret.otlp_exporter_headers[0].arn
+          }
+        ] : []
+      )
 
       enable_cloudwatch_logging              = true
       cloudwatch_log_group_name              = "/ecs/${local.name_prefix}-metrics-service"
