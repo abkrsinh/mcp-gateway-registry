@@ -57,10 +57,10 @@ def setup_otel():
             otlp_exporter = OTLPMetricExporter(endpoint=f"{settings.OTEL_OTLP_ENDPOINT}/v1/metrics")
             otlp_reader = PeriodicExportingMetricReader(
                 exporter=otlp_exporter,
-                export_interval_millis=30000,  # 30 seconds
+                export_interval_millis=settings.OTEL_OTLP_EXPORT_INTERVAL_MS
             )
             readers.append(otlp_reader)
-            logger.info(f"OTLP metrics exporter enabled for {settings.OTEL_OTLP_ENDPOINT}")
+            logger.info(f"OTLP metrics exporter enabled for {settings.OTEL_OTLP_ENDPOINT} (interval: {settings.OTEL_OTLP_EXPORT_INTERVAL_MS}ms)")
 
         # Create MeterProvider with configured readers and resource
         if readers:
