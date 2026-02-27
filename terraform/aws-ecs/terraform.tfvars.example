@@ -415,3 +415,4 @@ grafana_admin_password = "CHANGE-ME-SET-STRONG-PASSWORD"
 # otel_otlp_export_interval_ms = 30000
 # otel_otlp_endpoint           = ""
 # otel_exporter_otlp_headers   = ""
+# otel_exporter_otlp_metrics_temporality_preference = "cumulative"

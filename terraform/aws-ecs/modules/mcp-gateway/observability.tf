@@ -189,6 +189,10 @@ module "ecs_service_metrics" {
         {
           name  = "OTEL_OTLP_EXPORT_INTERVAL_MS"
           value = tostring(var.otel_otlp_export_interval_ms)
+        },
+        {
+          name  = "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"
+          value = var.otel_exporter_otlp_metrics_temporality_preference
         }
       ]
 

@@ -610,3 +610,9 @@ variable "otel_otlp_export_interval_ms" {
   type        = number
   default     = 30000
 }
+
+variable "otel_exporter_otlp_metrics_temporality_preference" {
+  description = "OTLP metrics temporality preference. Datadog requires delta. Default cumulative."
+  type        = string
+  default     = "cumulative"
+}
