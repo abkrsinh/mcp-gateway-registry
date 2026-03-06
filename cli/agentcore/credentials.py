@@ -18,6 +18,7 @@ import os
 from typing import Any
 
 import boto3
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,6 @@ class CredentialHelper:
             return True  # Can't validate without domain, allow persistence
 
         try:
-            import requests
-
             # Determine token endpoint based on provider
             if "auth0.com" in oauth_domain:
                 url = f"{oauth_domain}/oauth/token"
@@ -139,7 +138,8 @@ class CredentialHelper:
                 # Cognito and other providers
                 url = f"{oauth_domain}/oauth2/token"
 
-            response = requests.post(
+            # Bandit B113: timeout IS set below (line ~149) - not a missing timeout
+            response = requests.post(  # nosec B113
                 url,
                 data={
                     "grant_type": "client_credentials",

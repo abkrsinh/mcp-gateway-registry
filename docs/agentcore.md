@@ -502,6 +502,166 @@ sequenceDiagram
 - **Flexibility**: Each layer can use its own IdP and policies
 
 
+## Auto-Registration
+
+The AgentCore auto-registration CLI automates the discovery and registration of all AgentCore Gateways and Agent Runtimes in your AWS account. Instead of manually creating JSON configuration files for each resource, the CLI scans your account, builds registrations, manages credentials, and generates egress tokens — all in one command.
+
+> **Prerequisites:** Before using auto-registration, complete the setup steps in the [Auto-Registration Prerequisites Guide](agentcore-auto-registration-prerequisites.md).
+
+### Quick Start
+
+```bash
+# Discover resources without registering (preview)
+python -m cli.agentcore sync --dry-run
+
+# Register all gateways and runtimes
+python -m cli.agentcore sync
+
+# List discovered resources
+python -m cli.agentcore list
+```
+
+### CLI Usage
+
+The CLI provides two subcommands: `sync` (discover and register) and `list` (discover and display).
+
+#### Sync — Discover and Register
+
+```bash
+# Basic sync — register all gateways and runtimes
+python -m cli.agentcore sync
+
+# Dry-run — preview what would be registered without making changes
+python -m cli.agentcore sync --dry-run
+
+# Overwrite existing registrations (update metadata if changed)
+python -m cli.agentcore sync --overwrite
+
+# Register only gateways (skip runtimes)
+python -m cli.agentcore sync --gateways-only
+
+# Register only runtimes (skip gateways)
+python -m cli.agentcore sync --runtimes-only
+
+# Also register individual mcpServer gateway targets as separate MCP Servers
+python -m cli.agentcore sync --include-mcp-targets
+
+# Set visibility for registered resources
+python -m cli.agentcore sync --visibility public
+
+# Skip egress token generation after registration
+python -m cli.agentcore sync --skip-token-generation
+
+# JSON output for CI/CD pipelines
+python -m cli.agentcore sync --output json
+
+# Specify region and registry URL
+python -m cli.agentcore sync --region us-west-2 --registry-url https://registry.example.com
+
+# Custom token file and timeout
+python -m cli.agentcore sync --token-file /path/to/ingress.json --timeout 60
+
+# Enable debug logging
+python -m cli.agentcore sync --debug
+```
+
+#### List — Discover and Display
+
+```bash
+# List all discovered resources
+python -m cli.agentcore list
+
+# List only gateways
+python -m cli.agentcore list --gateways-only
+
+# List only runtimes
+python -m cli.agentcore list --runtimes-only
+
+# JSON output
+python -m cli.agentcore list --output json
+
+# Specify region
+python -m cli.agentcore list --region eu-west-1
+```
+
+### CLI Arguments Reference
+
+| Argument | Subcommand | Default | Description |
+|----------|------------|---------|-------------|
+| `--region` | sync, list | `AWS_REGION` env or `us-east-1` | AWS region to scan |
+| `--registry-url` | sync, list | `REGISTRY_URL` env or `http://localhost` | Registry base URL |
+| `--token-file` | sync, list | `REGISTRY_TOKEN_FILE` env or `.oauth-tokens/ingress.json` | Path to registry auth token file |
+| `--timeout` | sync, list | `30` | AWS API call timeout in seconds |
+| `--gateways-only` | sync, list | `false` | Only process gateways |
+| `--runtimes-only` | sync, list | `false` | Only process runtimes |
+| `--output` | sync, list | `text` | Output format: `text` or `json` |
+| `--debug` | sync, list | `false` | Enable DEBUG logging |
+| `--dry-run` | sync | `false` | Preview without registering or persisting credentials |
+| `--overwrite` | sync | `false` | Overwrite existing registrations |
+| `--visibility` | sync | `internal` | Registration visibility: `public`, `internal`, `group-restricted` |
+| `--include-mcp-targets` | sync | `false` | Register mcpServer gateway targets as separate MCP Servers |
+| `--skip-token-generation` | sync | `false` | Skip initial egress token generation after registration |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_REGION` | `us-east-1` | AWS region to scan |
+| `REGISTRY_URL` | `http://localhost` | MCP Gateway Registry URL |
+| `REGISTRY_TOKEN_FILE` | `.oauth-tokens/ingress.json` | Path to registry auth token |
+| `OAUTH_DOMAIN` | — | OAuth2 provider domain URL (required for CUSTOM_JWT token generation) |
+| `OAUTH_CLIENT_ID_{N}` | — | OAuth2 client ID for gateway N |
+| `OAUTH_CLIENT_SECRET_{N}` | — | OAuth2 client secret for gateway N |
+| `AGENTCORE_GATEWAY_ARN_{N}` | — | Gateway ARN for credential mapping |
+| `AGENTCORE_SERVER_NAME_{N}` | — | Friendly server name for gateway N |
+| `AGENTCORE_AUTHORIZER_TYPE_{N}` | — | Authorizer type: `CUSTOM_JWT`, `AWS_IAM`, or `NONE` |
+| `TOKEN_GENERATION_TIMEOUT` | `30` | Timeout in seconds for token generation |
+
+Legacy environment variable names `AGENTCORE_CLIENT_ID_{N}` and `AGENTCORE_CLIENT_SECRET_{N}` are supported as backward-compatible aliases for `OAUTH_CLIENT_ID_{N}` and `OAUTH_CLIENT_SECRET_{N}`.
+
+### What Happens During Sync
+
+1. **Discovery** — The CLI calls AWS boto3 APIs to discover all READY gateways and runtimes in the configured region.
+2. **Registration** — Each gateway is registered as an MCP Server. Each runtime is registered as an MCP Server (protocol=MCP) or A2A Agent (protocol=HTTP/A2A).
+3. **Credential management** — For `CUSTOM_JWT` gateways, OAuth2 credentials are loaded from environment variables or prompted interactively, validated by test-generating a token, and persisted to `.env` with 0600 permissions.
+4. **Token generation** — Initial egress tokens are generated via `generate_access_token.py` and saved to `.oauth-tokens/`.
+5. **Refresh verification** — The CLI verifies that `token_refresher.py` can read the persisted credentials for automatic token refresh.
+
+For `AWS_IAM` gateways, the CLI verifies AWS credentials via `sts:GetCallerIdentity`. For `NONE` gateways, no credentials are needed.
+
+### Troubleshooting Auto-Registration
+
+#### `AccessDeniedException` during discovery
+
+The IAM user or role lacks required permissions. Attach the discovery policy from the [prerequisites guide](agentcore-auto-registration-prerequisites.md#iam-permissions-for-discovery).
+
+#### "No OAuth2 M2M client created — see prerequisites"
+
+The CLI could not find OAuth2 credentials for a `CUSTOM_JWT` gateway. Either set `OAUTH_CLIENT_ID_{N}` / `OAUTH_CLIENT_SECRET_{N}` environment variables, or run the CLI interactively to enter credentials at the prompt.
+
+#### "Credentials validation failed — check client ID/secret"
+
+The CLI test-generated a token using the provided credentials and it failed. Verify:
+1. The `OAUTH_DOMAIN` environment variable points to the correct OAuth2 provider URL
+2. The client ID and secret are correct
+3. The M2M client has the required scopes/audience configured
+
+#### "Already registered — skipping (use --overwrite)"
+
+The resource is already registered in the registry. Use `--overwrite` to update the existing registration with current metadata.
+
+#### Token file not found
+
+The registry auth token file (default: `.oauth-tokens/ingress.json`) does not exist. Generate it using your ingress credential provider (e.g., `./credentials-provider/generate_creds.sh`).
+
+#### Dry-run shows resources but sync registers nothing
+
+In `--dry-run` mode, the CLI performs discovery but does not register, persist credentials, or generate tokens. Remove the `--dry-run` flag to perform actual registration.
+
+#### Timeout errors on AWS API calls
+
+Increase the timeout with `--timeout 60` (or higher). The default is 30 seconds.
+
 ## Next Steps
 
 ### 1. Configure Fine-Grained Access Control (FGAC)
