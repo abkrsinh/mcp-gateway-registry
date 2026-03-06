@@ -17,6 +17,7 @@ import boto3
 import requests
 from tenacity import (
     retry,
+    retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -56,11 +57,20 @@ def _retry_registry_call(func):
     """Decorator: retry on ``requests.exceptions.RequestException``.
 
     3 attempts, exponential backoff 1-4 s.
+    Does NOT retry on 409 Conflict (idempotency — resource already exists).
     """
+
+    def _should_retry(exc: BaseException) -> bool:
+        if isinstance(exc, requests.exceptions.HTTPError):
+            # Don't retry 409 Conflict — it means the resource already exists
+            if exc.response is not None and exc.response.status_code == 409:
+                return False
+        return isinstance(exc, requests.exceptions.RequestException)
+
     return retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=4),
-        retry=retry_if_exception_type(requests.exceptions.RequestException),
+        retry=retry_if_exception(_should_retry),
         before_sleep=lambda retry_state: logger.warning(
             f"Registry call failed, retrying in "
             f"{retry_state.next_action.sleep}s..."
@@ -223,7 +233,10 @@ class RegistrationBuilder:
             path=path,
             version="1.0.0",
             tags=["agentcore", "runtime", "agent", "auto-registered"],
-            visibility=self.visibility,
+            # Agent validator accepts: public, private, group-restricted (not "internal").
+            # MCP Servers use "internal" but A2A Agents use "public" as the default,
+            # so we map "internal" -> "public" for Agent registrations.
+            visibility="public" if self.visibility == "internal" else self.visibility,
             metadata={
                 "source": "agentcore-sync",
                 "runtime_arn": runtime.get("agentRuntimeArn"),
@@ -433,7 +446,20 @@ class SyncOrchestrator:
             result["message"] = "Successfully registered"
             logger.info(f"Registered gateway: {gateway_name}")
         except Exception as e:
-            if "already exists" in str(e).lower() and not self.overwrite:
+            err_str = str(e).lower()
+            is_conflict = False
+            if hasattr(e, "response") and getattr(e.response, "status_code", None) == 409:
+                is_conflict = True
+            elif "already exists" in err_str or "already registered" in err_str:
+                is_conflict = True
+            elif hasattr(e, "last_attempt"):
+                inner = e.last_attempt.exception()
+                if inner and hasattr(inner, "response") and getattr(inner.response, "status_code", None) == 409:
+                    is_conflict = True
+                elif inner and ("already exists" in str(inner).lower() or "already registered" in str(inner).lower()):
+                    is_conflict = True
+
+            if is_conflict and not self.overwrite:
                 result["status"] = "skipped"
                 result["message"] = (
                     "Already registered - skipping (use --overwrite)"
@@ -641,9 +667,24 @@ class SyncOrchestrator:
                     f"Registered runtime as Agent: {runtime_name}"
                 )
             except Exception as e:
-                if "already exists" in str(e).lower():
+                err_str = str(e).lower()
+                # Check for 409 Conflict (already exists) via HTTPError
+                is_conflict = False
+                if hasattr(e, "response") and getattr(e.response, "status_code", None) == 409:
+                    is_conflict = True
+                elif "already exists" in err_str or "already registered" in err_str:
+                    is_conflict = True
+                # Also unwrap RetryError
+                elif hasattr(e, "last_attempt"):
+                    inner = e.last_attempt.exception()
+                    if inner and hasattr(inner, "response") and getattr(inner.response, "status_code", None) == 409:
+                        is_conflict = True
+                    elif inner and ("already exists" in str(inner).lower() or "already registered" in str(inner).lower()):
+                        is_conflict = True
+
+                if is_conflict:
                     result["status"] = "skipped"
-                    result["message"] = "Already exists"
+                    result["message"] = "Already registered — use --overwrite to update"
                 else:
                     result["status"] = "failed"
                     result["message"] = str(e)
