@@ -120,13 +120,18 @@ class RegistrationBuilder:
         self,
         region: str,
         visibility: str = "internal",
+        session: boto3.Session | None = None,
     ) -> None:
         self.region = region
         self.visibility = visibility
+        self._session = session
         self.account_id = self._get_account_id()
 
     def _get_account_id(self) -> str:
-        sts = boto3.client("sts")
+        if self._session:
+            sts = self._session.client("sts")
+        else:
+            sts = boto3.client("sts")
         return sts.get_caller_identity()["Account"]
 
     def build_gateway_registration(
