@@ -1,7 +1,7 @@
 """Unit tests for cli.agentcore.credentials — CredentialHelper.
 
-Tests credential collection from env vars (OAUTH_CLIENT_ID_{N} and legacy
-AGENTCORE_CLIENT_ID_{N}), interactive prompt mocking, OAuth2 validation
+Tests credential collection from env vars (AGENTCORE_CLIENT_ID_{N} /
+AGENTCORE_CLIENT_SECRET_{N}), interactive prompt mocking, OAuth2 validation
 with Cognito/Auth0/Okta, AWS_IAM flow, NONE flow, credential persistence,
 and credential validation gating.
 """
@@ -38,13 +38,13 @@ def _make_credential_helper(env_vars: dict[str, str] | None = None):
 
 
 class TestEnvVarLoading:
-    """Tests for _load_from_env() — OAUTH_ and legacy AGENTCORE_ prefixes."""
+    """Tests for _load_from_env() — AGENTCORE_CLIENT_ID_{N} env vars."""
 
-    def test_loads_oauth_prefix_credentials(self):
-        """Req 11.1: Load from OAUTH_CLIENT_ID_{N} env vars."""
+    def test_loads_credentials_from_env(self):
+        """Req 11.1: Load from AGENTCORE_CLIENT_ID_{N} env vars."""
         env = {
-            "OAUTH_CLIENT_ID_1": "id-1",
-            "OAUTH_CLIENT_SECRET_1": "secret-1",
+            "AGENTCORE_CLIENT_ID_1": "id-1",
+            "AGENTCORE_CLIENT_SECRET_1": "secret-1",
             "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
         }
         helper = _make_credential_helper(env)
@@ -54,39 +54,10 @@ class TestEnvVarLoading:
         assert creds["client_id"] == "id-1"
         assert creds["client_secret"] == "secret-1"
 
-    def test_loads_legacy_agentcore_prefix_credentials(self):
-        """Req 11.2: Legacy AGENTCORE_CLIENT_ID_{N} backward compatibility."""
-        env = {
-            "AGENTCORE_CLIENT_ID_1": "legacy-id",
-            "AGENTCORE_CLIENT_SECRET_1": "legacy-secret",
-            "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
-        }
-        helper = _make_credential_helper(env)
-
-        assert SAMPLE_GATEWAY_ARN in helper.credentials
-        creds = helper.credentials[SAMPLE_GATEWAY_ARN]
-        assert creds["client_id"] == "legacy-id"
-        assert creds["client_secret"] == "legacy-secret"
-
-    def test_oauth_prefix_takes_precedence_over_legacy(self):
-        """OAUTH_ prefix is checked first; legacy is fallback only."""
-        env = {
-            "OAUTH_CLIENT_ID_1": "new-id",
-            "OAUTH_CLIENT_SECRET_1": "new-secret",
-            "AGENTCORE_CLIENT_ID_1": "old-id",
-            "AGENTCORE_CLIENT_SECRET_1": "old-secret",
-            "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
-        }
-        helper = _make_credential_helper(env)
-
-        creds = helper.credentials[SAMPLE_GATEWAY_ARN]
-        assert creds["client_id"] == "new-id"
-        assert creds["client_secret"] == "new-secret"
-
     def test_incomplete_triplet_not_loaded(self):
         """Only complete triplets (id + secret + arn) are stored."""
         env = {
-            "OAUTH_CLIENT_ID_1": "id-1",
+            "AGENTCORE_CLIENT_ID_1": "id-1",
             # Missing secret and ARN
         }
         helper = _make_credential_helper(env)
@@ -95,11 +66,11 @@ class TestEnvVarLoading:
     def test_multiple_credential_sets_loaded(self):
         """Multiple indices are loaded correctly."""
         env = {
-            "OAUTH_CLIENT_ID_1": "id-1",
-            "OAUTH_CLIENT_SECRET_1": "secret-1",
+            "AGENTCORE_CLIENT_ID_1": "id-1",
+            "AGENTCORE_CLIENT_SECRET_1": "secret-1",
             "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
-            "OAUTH_CLIENT_ID_2": "id-2",
-            "OAUTH_CLIENT_SECRET_2": "secret-2",
+            "AGENTCORE_CLIENT_ID_2": "id-2",
+            "AGENTCORE_CLIENT_SECRET_2": "secret-2",
             "AGENTCORE_GATEWAY_ARN_2": SAMPLE_GATEWAY_ARN_2,
         }
         helper = _make_credential_helper(env)
@@ -111,8 +82,8 @@ class TestEnvVarLoading:
     def test_server_name_and_authorizer_type_loaded(self):
         """Optional server_name and authorizer_type are captured."""
         env = {
-            "OAUTH_CLIENT_ID_1": "id-1",
-            "OAUTH_CLIENT_SECRET_1": "secret-1",
+            "AGENTCORE_CLIENT_ID_1": "id-1",
+            "AGENTCORE_CLIENT_SECRET_1": "secret-1",
             "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
             "AGENTCORE_SERVER_NAME_1": "my-server",
             "AGENTCORE_AUTHORIZER_TYPE_1": "CUSTOM_JWT",
@@ -161,8 +132,8 @@ class TestInteractivePrompt:
     def test_get_credentials_uses_env_before_prompt(self):
         """Env vars are preferred over interactive prompt."""
         env = {
-            "OAUTH_CLIENT_ID_1": "env-id",
-            "OAUTH_CLIENT_SECRET_1": "env-secret",
+            "AGENTCORE_CLIENT_ID_1": "env-id",
+            "AGENTCORE_CLIENT_SECRET_1": "env-secret",
             "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
         }
         helper = _make_credential_helper(env)
@@ -233,8 +204,8 @@ class TestOAuth2Cognito:
     def test_get_credentials_returns_oauth2_for_custom_jwt(self):
         """CUSTOM_JWT authorizer routes to OAuth2 credential collection."""
         env = {
-            "OAUTH_CLIENT_ID_1": "jwt-id",
-            "OAUTH_CLIENT_SECRET_1": "jwt-secret",
+            "AGENTCORE_CLIENT_ID_1": "jwt-id",
+            "AGENTCORE_CLIENT_SECRET_1": "jwt-secret",
             "AGENTCORE_GATEWAY_ARN_1": SAMPLE_GATEWAY_ARN,
         }
         helper = _make_credential_helper(env)
@@ -453,10 +424,10 @@ class TestNoneAuthorizer:
 
 
 class TestCredentialPersistence:
-    """Tests for persist_credentials() — .env writing with OAUTH_ prefix."""
+    """Tests for persist_credentials() — .env writing with AGENTCORE_ prefix."""
 
     def test_persist_appends_to_env_file(self, tmp_path):
-        """Req 12.3: Persist with OAUTH_ prefix to .env."""
+        """Req 12.3: Persist with AGENTCORE_ prefix to .env."""
         helper = _make_credential_helper()
         env_file = tmp_path / ".env"
         env_file.write_text("# existing content\n")
@@ -467,8 +438,8 @@ class TestCredentialPersistence:
         )
 
         content = env_file.read_text()
-        assert f"OAUTH_CLIENT_ID_{idx}=persist-id" in content
-        assert f"OAUTH_CLIENT_SECRET_{idx}=persist-secret" in content
+        assert f"AGENTCORE_CLIENT_ID_{idx}=persist-id" in content
+        assert f"AGENTCORE_CLIENT_SECRET_{idx}=persist-secret" in content
         assert f"AGENTCORE_GATEWAY_ARN_{idx}={SAMPLE_GATEWAY_ARN}" in content
         assert f"AGENTCORE_SERVER_NAME_{idx}=my-server" in content
 
@@ -488,8 +459,8 @@ class TestCredentialPersistence:
     def test_persist_uses_next_available_index(self, tmp_path):
         """Req 12.5: Uses next available index."""
         env = {
-            "OAUTH_CLIENT_ID_1": "existing-id",
-            "OAUTH_CLIENT_SECRET_1": "existing-secret",
+            "AGENTCORE_CLIENT_ID_1": "existing-id",
+            "AGENTCORE_CLIENT_SECRET_1": "existing-secret",
             "AGENTCORE_GATEWAY_ARN_1": "arn:existing",
         }
         helper = _make_credential_helper(env)
@@ -523,8 +494,8 @@ class TestCredentialPersistence:
     def test_get_next_env_index_with_existing(self):
         """Existing credentials at index 3 → next is 4."""
         env = {
-            "OAUTH_CLIENT_ID_3": "id-3",
-            "OAUTH_CLIENT_SECRET_3": "secret-3",
+            "AGENTCORE_CLIENT_ID_3": "id-3",
+            "AGENTCORE_CLIENT_SECRET_3": "secret-3",
             "AGENTCORE_GATEWAY_ARN_3": "arn:gw-3",
         }
         helper = _make_credential_helper(env)
@@ -599,3 +570,80 @@ class TestCredentialValidation:
         assert is_valid is False
         # Verify .env is still empty (persist was not called)
         assert env_file.read_text() == ""
+
+
+# ---------------------------------------------------------------------------
+# Duplicate credential prevention
+# ---------------------------------------------------------------------------
+
+
+class TestCredentialDeduplication:
+    """Tests for persist_credentials() — dedup on re-sync."""
+
+    def test_persist_updates_existing_instead_of_appending(self, tmp_path):
+        """Running sync twice for the same gateway updates in-place, no duplicates."""
+        helper = _make_credential_helper()
+        env_file = tmp_path / ".env"
+        env_file.write_text("# existing\n")
+
+        creds = {"client_id": "id-1", "client_secret": "secret-1"}
+        idx1 = helper.persist_credentials(
+            SAMPLE_GATEWAY_ARN, creds, "my-gw", str(env_file)
+        )
+
+        # Second persist with same ARN — should update, not append
+        creds2 = {"client_id": "id-1-updated", "client_secret": "secret-1-updated"}
+        idx2 = helper.persist_credentials(
+            SAMPLE_GATEWAY_ARN, creds2, "my-gw", str(env_file)
+        )
+
+        assert idx1 == idx2  # Same index reused
+        content = env_file.read_text()
+        # Only one occurrence of the ARN
+        assert content.count(f"AGENTCORE_GATEWAY_ARN_{idx1}=") == 1
+        # Updated values present
+        assert "id-1-updated" in content
+        assert "secret-1-updated" in content
+        # Old values gone
+        assert "id-1\n" not in content
+
+    def test_persist_different_arns_get_different_indices(self, tmp_path):
+        """Different gateway ARNs get separate indices."""
+        helper = _make_credential_helper()
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+
+        creds1 = {"client_id": "id-a", "client_secret": "secret-a"}
+        idx1 = helper.persist_credentials(
+            SAMPLE_GATEWAY_ARN, creds1, "gw-a", str(env_file)
+        )
+
+        creds2 = {"client_id": "id-b", "client_secret": "secret-b"}
+        idx2 = helper.persist_credentials(
+            SAMPLE_GATEWAY_ARN_2, creds2, "gw-b", str(env_file)
+        )
+
+        assert idx1 != idx2
+        content = env_file.read_text()
+        assert f"AGENTCORE_CLIENT_ID_{idx1}=id-a" in content
+        assert f"AGENTCORE_CLIENT_ID_{idx2}=id-b" in content
+
+    def test_find_existing_env_index_returns_none_for_new_arn(self, tmp_path):
+        """_find_existing_env_index returns None when ARN not in file."""
+        helper = _make_credential_helper()
+        env_file = tmp_path / ".env"
+        env_file.write_text("AGENTCORE_GATEWAY_ARN_1=arn:other\n")
+
+        result = helper._find_existing_env_index(SAMPLE_GATEWAY_ARN, str(env_file))
+        assert result is None
+
+    def test_find_existing_env_index_returns_index_for_existing_arn(self, tmp_path):
+        """_find_existing_env_index returns the correct index."""
+        helper = _make_credential_helper()
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            f"AGENTCORE_GATEWAY_ARN_3={SAMPLE_GATEWAY_ARN}\n"
+        )
+
+        result = helper._find_existing_env_index(SAMPLE_GATEWAY_ARN, str(env_file))
+        assert result == 3

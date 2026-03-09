@@ -146,22 +146,25 @@ You can provide OAuth2 credentials in two ways:
 **Option A: Environment variables (recommended for CI/CD)**
 
 ```bash
-# For gateway 1
-export OAUTH_CLIENT_ID_1="your-client-id"
-export OAUTH_CLIENT_SECRET_1="your-client-secret"
+# Gateway 1: CUSTOM_JWT (requires OAuth2 credentials)
+export AGENTCORE_CLIENT_ID_1="your-client-id"
+export AGENTCORE_CLIENT_SECRET_1="your-client-secret"
 export AGENTCORE_GATEWAY_ARN_1="arn:aws:bedrock:us-east-1:123456789012:gateway/gw-abc123"
-export AGENTCORE_SERVER_NAME_1="my-gateway"
+export AGENTCORE_SERVER_NAME_1="my-oauth-gateway"
 export AGENTCORE_AUTHORIZER_TYPE_1="CUSTOM_JWT"
 
-# For gateway 2
-export OAUTH_CLIENT_ID_2="another-client-id"
-export OAUTH_CLIENT_SECRET_2="another-client-secret"
+# Gateway 2: AWS_IAM (no OAuth2 credentials needed)
 export AGENTCORE_GATEWAY_ARN_2="arn:aws:bedrock:us-east-1:123456789012:gateway/gw-def456"
-export AGENTCORE_SERVER_NAME_2="another-gateway"
-export AGENTCORE_AUTHORIZER_TYPE_2="CUSTOM_JWT"
+export AGENTCORE_SERVER_NAME_2="my-iam-gateway"
+export AGENTCORE_AUTHORIZER_TYPE_2="AWS_IAM"
+
+# Gateway 3: NONE (no credentials needed)
+export AGENTCORE_GATEWAY_ARN_3="arn:aws:bedrock:us-east-1:123456789012:gateway/gw-ghi789"
+export AGENTCORE_SERVER_NAME_3="my-public-gateway"
+export AGENTCORE_AUTHORIZER_TYPE_3="NONE"
 ```
 
-> Legacy env var names `AGENTCORE_CLIENT_ID_{N}` and `AGENTCORE_CLIENT_SECRET_{N}` are also supported for backward compatibility.
+> The `AGENTCORE_AUTHORIZER_TYPE_{N}` variable is optional — the CLI auto-detects the authorizer type from the gateway. Set it explicitly only if you want to override the detected type.
 
 **Option B: Interactive prompt**
 

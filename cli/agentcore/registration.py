@@ -78,6 +78,36 @@ def _retry_registry_call(func):
     )(func)
 
 
+def _is_conflict_error(exc: Exception) -> bool:
+    """Check if an exception indicates a 409 Conflict (resource already exists).
+
+    Handles:
+    - Direct HTTPError with 409 status code
+    - Error message containing "already exists" or "already registered"
+    - Tenacity RetryError wrapping any of the above
+    """
+    # Check direct HTTPError response
+    if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 409:
+        return True
+
+    # Check error message
+    err_str = str(exc).lower()
+    if "already exists" in err_str or "already registered" in err_str:
+        return True
+
+    # Unwrap tenacity RetryError
+    if hasattr(exc, "last_attempt"):
+        inner = exc.last_attempt.exception()
+        if inner:
+            if hasattr(inner, "response") and getattr(inner.response, "status_code", None) == 409:
+                return True
+            inner_str = str(inner).lower()
+            if "already exists" in inner_str or "already registered" in inner_str:
+                return True
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Registration Builder
 # ---------------------------------------------------------------------------
@@ -446,24 +476,9 @@ class SyncOrchestrator:
             result["message"] = "Successfully registered"
             logger.info(f"Registered gateway: {gateway_name}")
         except Exception as e:
-            err_str = str(e).lower()
-            is_conflict = False
-            if hasattr(e, "response") and getattr(e.response, "status_code", None) == 409:
-                is_conflict = True
-            elif "already exists" in err_str or "already registered" in err_str:
-                is_conflict = True
-            elif hasattr(e, "last_attempt"):
-                inner = e.last_attempt.exception()
-                if inner and hasattr(inner, "response") and getattr(inner.response, "status_code", None) == 409:
-                    is_conflict = True
-                elif inner and ("already exists" in str(inner).lower() or "already registered" in str(inner).lower()):
-                    is_conflict = True
-
-            if is_conflict and not self.overwrite:
+            if _is_conflict_error(e) and not self.overwrite:
                 result["status"] = "skipped"
-                result["message"] = (
-                    "Already registered - skipping (use --overwrite)"
-                )
+                result["message"] = "Already registered - skipping (use --overwrite)"
                 logger.warning(
                     f"Already registered - skipping: {gateway_name} "
                     f"(use --overwrite)"
@@ -667,30 +682,13 @@ class SyncOrchestrator:
                     f"Registered runtime as Agent: {runtime_name}"
                 )
             except Exception as e:
-                err_str = str(e).lower()
-                # Check for 409 Conflict (already exists) via HTTPError
-                is_conflict = False
-                if hasattr(e, "response") and getattr(e.response, "status_code", None) == 409:
-                    is_conflict = True
-                elif "already exists" in err_str or "already registered" in err_str:
-                    is_conflict = True
-                # Also unwrap RetryError
-                elif hasattr(e, "last_attempt"):
-                    inner = e.last_attempt.exception()
-                    if inner and hasattr(inner, "response") and getattr(inner.response, "status_code", None) == 409:
-                        is_conflict = True
-                    elif inner and ("already exists" in str(inner).lower() or "already registered" in str(inner).lower()):
-                        is_conflict = True
-
-                if is_conflict:
+                if _is_conflict_error(e):
                     result["status"] = "skipped"
-                    result["message"] = "Already registered — use --overwrite to update"
+                    result["message"] = "Already registered - use --overwrite to update"
                 else:
                     result["status"] = "failed"
                     result["message"] = str(e)
-                    logger.error(
-                        f"Failed to register runtime as agent: {e}"
-                    )
+                    logger.error(f"Failed to register runtime as agent: {e}")
 
         self.results.append(result)
 

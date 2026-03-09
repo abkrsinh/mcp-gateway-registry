@@ -5,8 +5,8 @@ Handles credentials for all authorizer types:
 - AWS_IAM: Standard AWS credential chain via STS
 - NONE: No credentials needed
 
-Loads from environment variables (``OAUTH_CLIENT_ID_{N}`` with legacy
-``AGENTCORE_CLIENT_ID_{N}`` fallback), prompts interactively, validates
+Loads from environment variables (``AGENTCORE_CLIENT_ID_{N}`` /
+``AGENTCORE_CLIENT_SECRET_{N}``), prompts interactively, validates
 by test-generating a token, and persists to ``.env`` with 0600 permissions.
 """
 
@@ -27,8 +27,8 @@ class CredentialHelper:
     """Manages credentials for all authorizer types.
 
     On init, loads existing credentials from environment variables
-    using both the new ``OAUTH_CLIENT_ID_{N}`` and legacy
-    ``AGENTCORE_CLIENT_ID_{N}`` naming conventions.
+    using ``AGENTCORE_CLIENT_ID_{N}`` / ``AGENTCORE_CLIENT_SECRET_{N}``
+    naming conventions.
     """
 
     def __init__(self) -> None:
@@ -42,20 +42,12 @@ class CredentialHelper:
     def _load_from_env(self) -> None:
         """Load credentials from environment variables for N=1..100.
 
-        Checks ``OAUTH_CLIENT_ID_{N}`` first, then falls back to
-        legacy ``AGENTCORE_CLIENT_ID_{N}``. Only stores complete
-        triplets (client_id + client_secret + gateway_arn).
+        Reads ``AGENTCORE_CLIENT_ID_{N}`` / ``AGENTCORE_CLIENT_SECRET_{N}``.
+        Only stores complete triplets (client_id + client_secret + gateway_arn).
         """
         for i in range(1, 101):
-            # New naming: OAUTH_CLIENT_ID_{N}
-            client_id = os.environ.get(f"OAUTH_CLIENT_ID_{i}")
-            client_secret = os.environ.get(f"OAUTH_CLIENT_SECRET_{i}")
-
-            # Legacy fallback: AGENTCORE_CLIENT_ID_{N}
-            if not client_id:
-                client_id = os.environ.get(f"AGENTCORE_CLIENT_ID_{i}")
-            if not client_secret:
-                client_secret = os.environ.get(f"AGENTCORE_CLIENT_SECRET_{i}")
+            client_id = os.environ.get(f"AGENTCORE_CLIENT_ID_{i}")
+            client_secret = os.environ.get(f"AGENTCORE_CLIENT_SECRET_{i}")
 
             gateway_arn = os.environ.get(f"AGENTCORE_GATEWAY_ARN_{i}")
 
@@ -173,26 +165,25 @@ class CredentialHelper:
     ) -> int:
         """Persist new credentials to ``.env`` file for token refresh.
 
-        Appends ``OAUTH_CLIENT_ID_{N}``, ``OAUTH_CLIENT_SECRET_{N}``,
+        Writes ``AGENTCORE_CLIENT_ID_{N}``, ``AGENTCORE_CLIENT_SECRET_{N}``,
         ``AGENTCORE_GATEWAY_ARN_{N}``, and ``AGENTCORE_SERVER_NAME_{N}``
-        entries with the next available index. Sets file permissions
-        to 0600.
+        entries. If credentials for this gateway ARN already exist,
+        updates them in-place. Otherwise appends with the next available
+        index. Sets file permissions to 0600.
 
         Returns the assigned index.
         """
-        idx = self.get_next_env_index()
         env_path = os.path.abspath(env_file)
 
-        lines = [
-            f"\n# AgentCore Gateway: {server_name} ({gateway_arn})\n",
-            f"OAUTH_CLIENT_ID_{idx}={creds['client_id']}\n",
-            f"OAUTH_CLIENT_SECRET_{idx}={creds['client_secret']}\n",
-            f"AGENTCORE_GATEWAY_ARN_{idx}={gateway_arn}\n",
-            f"AGENTCORE_SERVER_NAME_{idx}={server_name}\n",
-        ]
+        # Check if this gateway ARN already has credentials in the file
+        existing_idx = self._find_existing_env_index(gateway_arn, env_path)
 
-        with open(env_path, "a") as f:
-            f.writelines(lines)
+        if existing_idx:
+            idx = existing_idx
+            self._update_env_block(idx, creds, gateway_arn, server_name, env_path)
+        else:
+            idx = self.get_next_env_index()
+            self._append_env_block(idx, creds, gateway_arn, server_name, env_path)
 
         # Secure file permissions
         try:
@@ -224,9 +215,7 @@ class CredentialHelper:
                 max_index = idx
         # Also check env vars directly
         for i in range(1, 101):
-            if os.environ.get(f"OAUTH_CLIENT_ID_{i}") or os.environ.get(
-                f"AGENTCORE_CLIENT_ID_{i}"
-            ):
+            if os.environ.get(f"AGENTCORE_CLIENT_ID_{i}"):
                 max_index = max(max_index, i)
         return max_index + 1
 
@@ -250,6 +239,90 @@ class CredentialHelper:
         except Exception as e:
             logger.warning(f"AWS credentials not available for IAM auth: {e}")
             return None
+    def _find_existing_env_index(
+        self,
+        gateway_arn: str,
+        env_path: str,
+    ) -> int | None:
+        """Find the index of an existing credential block for a gateway ARN.
+
+        Scans the ``.env`` file for ``AGENTCORE_GATEWAY_ARN_{N}={arn}``
+        and returns N if found, else None.
+        """
+        if not os.path.exists(env_path):
+            return None
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("AGENTCORE_GATEWAY_ARN_") and f"={gateway_arn}" in line:
+                        # Extract index from AGENTCORE_GATEWAY_ARN_{N}=...
+                        key = line.split("=", 1)[0]
+                        idx_str = key.replace("AGENTCORE_GATEWAY_ARN_", "")
+                        try:
+                            return int(idx_str)
+                        except ValueError:
+                            continue
+        except OSError:
+            pass
+        return None
+
+    def _update_env_block(
+        self,
+        idx: int,
+        creds: dict[str, str],
+        gateway_arn: str,
+        server_name: str,
+        env_path: str,
+    ) -> None:
+        """Update an existing credential block in-place in the ``.env`` file."""
+        with open(env_path) as f:
+            content = f.read()
+
+        replacements = {
+            f"AGENTCORE_CLIENT_ID_{idx}": creds["client_id"],
+            f"AGENTCORE_CLIENT_SECRET_{idx}": creds["client_secret"],
+            f"AGENTCORE_GATEWAY_ARN_{idx}": gateway_arn,
+            f"AGENTCORE_SERVER_NAME_{idx}": server_name,
+        }
+
+        lines = content.splitlines(keepends=True)
+        new_lines = []
+        for line in lines:
+            replaced = False
+            for key, value in replacements.items():
+                if line.startswith(f"{key}="):
+                    new_lines.append(f"{key}={value}\n")
+                    replaced = True
+                    break
+            if not replaced:
+                new_lines.append(line)
+
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+
+        logger.debug(f"Updated existing credential block at index {idx}")
+
+    def _append_env_block(
+        self,
+        idx: int,
+        creds: dict[str, str],
+        gateway_arn: str,
+        server_name: str,
+        env_path: str,
+    ) -> None:
+        """Append a new credential block to the ``.env`` file."""
+        lines = [
+            f"\n# AgentCore Gateway: {server_name} ({gateway_arn})\n",
+            f"AGENTCORE_CLIENT_ID_{idx}={creds['client_id']}\n",
+            f"AGENTCORE_CLIENT_SECRET_{idx}={creds['client_secret']}\n",
+            f"AGENTCORE_GATEWAY_ARN_{idx}={gateway_arn}\n",
+            f"AGENTCORE_SERVER_NAME_{idx}={server_name}\n",
+        ]
+        with open(env_path, "a") as f:
+            f.writelines(lines)
+
+
 
     def _prompt_credentials(
         self,

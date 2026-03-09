@@ -16,11 +16,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Ensure credentials-provider is importable
+# Ensure credentials-provider/agentcore-auth is importable
 _repo_root = Path(__file__).resolve().parent.parent.parent
-_cred_provider = _repo_root / "credentials-provider"
-if str(_cred_provider) not in sys.path:
-    sys.path.insert(0, str(_cred_provider))
+_agentcore_auth = _repo_root / "credentials-provider" / "agentcore-auth"
+if str(_agentcore_auth) not in sys.path:
+    sys.path.insert(0, str(_agentcore_auth))
 
 
 class TokenManager:
@@ -55,6 +55,12 @@ class TokenManager:
         """
         token_paths: dict[str, str] = {}
 
+        # Bridge OAUTH_DOMAIN → COGNITO_DOMAIN so generate_access_token
+        # can find the OAuth domain even when .env has a placeholder value
+        if self.oauth_domain:
+            os.environ.setdefault("COGNITO_DOMAIN", self.oauth_domain)
+            os.environ.setdefault("OAUTH_DOMAIN", self.oauth_domain)
+
         for config in gateway_configs:
             gateway_arn = config["gateway_arn"]
             server_name = config.get("server_name", "")
@@ -68,7 +74,7 @@ class TokenManager:
                 continue
 
             try:
-                from agentcore_auth.generate_access_token import (
+                from generate_access_token import (
                     generate_access_token,
                 )
 
@@ -115,7 +121,7 @@ class TokenManager:
         """Verify that ``token_refresher.py`` can read credentials from ``.env``.
 
         Checks that the env file exists and contains at least one
-        ``OAUTH_CLIENT_ID_`` or ``AGENTCORE_CLIENT_ID_`` entry.
+        ``AGENTCORE_CLIENT_ID_`` entry.
         """
         env_path = Path(env_file)
         if not env_path.exists():
@@ -123,10 +129,9 @@ class TokenManager:
             return False
 
         content = env_path.read_text()
-        has_oauth = "OAUTH_CLIENT_ID_" in content
-        has_legacy = "AGENTCORE_CLIENT_ID_" in content
+        has_creds = "AGENTCORE_CLIENT_ID_" in content
 
-        if has_oauth or has_legacy:
+        if has_creds:
             logger.info("Token refresh setup verified — credentials in .env")
             return True
 
