@@ -45,9 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  AWS_REGION              AWS region (default: us-east-1)\n"
             "  REGISTRY_URL            Registry base URL\n"
             "  REGISTRY_TOKEN_FILE     Path to registry auth token file\n"
-            "  OAUTH_DOMAIN            OAuth2 provider domain URL\n"
-            "  OAUTH_CLIENT_ID_{N}     OAuth2 client ID for gateway N\n"
-            "  OAUTH_CLIENT_SECRET_{N} OAuth2 client secret for gateway N\n"
+            "  OAUTH_DOMAIN               OAuth2 provider domain URL\n"
+            "  AGENTCORE_CLIENT_ID_{N}     OAuth2 client ID for gateway N\n"
+            "  AGENTCORE_CLIENT_SECRET_{N} OAuth2 client secret for gateway N\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -305,6 +305,14 @@ def _print_list_text(
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point: parse args, configure logging, dispatch subcommand."""
+    # Load .env before anything reads os.environ
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

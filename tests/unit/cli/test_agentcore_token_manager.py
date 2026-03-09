@@ -34,30 +34,23 @@ def _make_gateway_config(arn: str, server_name: str = "my-gateway") -> dict:
 
 @pytest.fixture()
 def mock_generate_access_token():
-    """Install a fake agentcore_auth package in sys.modules and return the mock function."""
+    """Install a fake generate_access_token module in sys.modules and return the mock function."""
     mock_fn = MagicMock()
 
-    # Create fake module hierarchy: agentcore_auth.generate_access_token
-    agentcore_auth = types.ModuleType("agentcore_auth")
-    gen_mod = types.ModuleType("agentcore_auth.generate_access_token")
+    # Create fake module: generate_access_token (direct import, not nested)
+    gen_mod = types.ModuleType("generate_access_token")
     gen_mod.generate_access_token = mock_fn
-    agentcore_auth.generate_access_token = gen_mod
 
-    saved = {
-        k: sys.modules.get(k)
-        for k in ("agentcore_auth", "agentcore_auth.generate_access_token")
-    }
-    sys.modules["agentcore_auth"] = agentcore_auth
-    sys.modules["agentcore_auth.generate_access_token"] = gen_mod
+    saved = sys.modules.get("generate_access_token")
+    sys.modules["generate_access_token"] = gen_mod
 
     yield mock_fn
 
     # Restore original state
-    for k, v in saved.items():
-        if v is None:
-            sys.modules.pop(k, None)
-        else:
-            sys.modules[k] = v
+    if saved is None:
+        sys.modules.pop("generate_access_token", None)
+    else:
+        sys.modules["generate_access_token"] = saved
 
 
 # ---------------------------------------------------------------------------
@@ -190,11 +183,11 @@ class TestVerifyRefreshSetup:
     """Validates: Requirements 13.3 — token_refresher.py reads credentials from .env."""
 
     def test_env_with_oauth_client_id_returns_true(self, tmp_path):
-        """verify_refresh_setup returns True when .env has OAUTH_CLIENT_ID_ entries."""
+        """verify_refresh_setup returns True when .env has AGENTCORE_CLIENT_ID_ entries."""
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "OAUTH_CLIENT_ID_1=my-client-id\n"
-            "OAUTH_CLIENT_SECRET_1=my-secret\n"
+            "AGENTCORE_CLIENT_ID_1=my-client-id\n"
+            "AGENTCORE_CLIENT_SECRET_1=my-secret\n"
         )
 
         tm = TokenManager()
@@ -363,3 +356,49 @@ class TestTokenManagerInit:
         """OAUTH_DOMAIN env var is used when no param provided."""
         tm = TokenManager()
         assert tm.oauth_domain == "https://env.example.com"
+
+
+class TestOAuthDomainBridging:
+    """Tests for OAUTH_DOMAIN → COGNITO_DOMAIN env var bridging."""
+
+    def test_bridges_oauth_domain_to_cognito_domain(self, mock_generate_access_token):
+        """TokenManager sets COGNITO_DOMAIN from oauth_domain before generating tokens."""
+        tm = TokenManager(oauth_domain="https://my-pool.auth.us-east-2.amazoncognito.com")
+
+        # Clear any existing env vars
+        env_backup = {}
+        for key in ("COGNITO_DOMAIN", "OAUTH_DOMAIN"):
+            env_backup[key] = os.environ.pop(key, None)
+
+        try:
+            configs = [_make_gateway_config(SAMPLE_GATEWAY_ARN, "test-gw")]
+            arn_to_index = {SAMPLE_GATEWAY_ARN: 1}
+            tm.generate_tokens_for_gateways(configs, arn_to_index)
+
+            # Verify env vars were set
+            assert os.environ.get("COGNITO_DOMAIN") == "https://my-pool.auth.us-east-2.amazoncognito.com"
+            assert os.environ.get("OAUTH_DOMAIN") == "https://my-pool.auth.us-east-2.amazoncognito.com"
+            mock_generate_access_token.assert_called_once()
+        finally:
+            # Restore env
+            for key, val in env_backup.items():
+                if val is not None:
+                    os.environ[key] = val
+                else:
+                    os.environ.pop(key, None)
+
+    def test_does_not_override_existing_cognito_domain(self, mock_generate_access_token):
+        """If COGNITO_DOMAIN is already set, setdefault doesn't override it."""
+        tm = TokenManager(oauth_domain="https://new-domain.example.com")
+
+        os.environ["COGNITO_DOMAIN"] = "https://existing-domain.example.com"
+        try:
+            configs = [_make_gateway_config(SAMPLE_GATEWAY_ARN, "test-gw")]
+            arn_to_index = {SAMPLE_GATEWAY_ARN: 1}
+            tm.generate_tokens_for_gateways(configs, arn_to_index)
+
+            # setdefault should NOT override existing value
+            assert os.environ["COGNITO_DOMAIN"] == "https://existing-domain.example.com"
+        finally:
+            os.environ.pop("COGNITO_DOMAIN", None)
+            os.environ.pop("OAUTH_DOMAIN", None)

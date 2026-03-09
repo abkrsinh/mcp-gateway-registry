@@ -161,7 +161,7 @@ Create a file named `gateway-config.json` in your AgentCore project directory wi
   "path": "/customer-support-assistant",
   "proxy_pass_url": "https://<YOUR-GATEWAY-ID>.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp/",
   "auth_provider": "bedrock-agentcore",
-  "auth_type": "oauth",
+  "auth_scheme": "bearer",
   "supported_transports": [
     "streamable-http"
   ],
@@ -610,14 +610,14 @@ python -m cli.agentcore list --region eu-west-1
 | `REGISTRY_URL` | `http://localhost` | MCP Gateway Registry URL |
 | `REGISTRY_TOKEN_FILE` | `.oauth-tokens/ingress.json` | Path to registry auth token |
 | `OAUTH_DOMAIN` | — | OAuth2 provider domain URL (required for CUSTOM_JWT token generation) |
-| `OAUTH_CLIENT_ID_{N}` | — | OAuth2 client ID for gateway N |
-| `OAUTH_CLIENT_SECRET_{N}` | — | OAuth2 client secret for gateway N |
+| `AGENTCORE_CLIENT_ID_{N}` | — | OAuth2 client ID for gateway N |
+| `AGENTCORE_CLIENT_SECRET_{N}` | — | OAuth2 client secret for gateway N |
 | `AGENTCORE_GATEWAY_ARN_{N}` | — | Gateway ARN for credential mapping |
 | `AGENTCORE_SERVER_NAME_{N}` | — | Friendly server name for gateway N |
 | `AGENTCORE_AUTHORIZER_TYPE_{N}` | — | Authorizer type: `CUSTOM_JWT`, `AWS_IAM`, or `NONE` |
 | `TOKEN_GENERATION_TIMEOUT` | `30` | Timeout in seconds for token generation |
 
-Legacy environment variable names `AGENTCORE_CLIENT_ID_{N}` and `AGENTCORE_CLIENT_SECRET_{N}` are supported as backward-compatible aliases for `OAUTH_CLIENT_ID_{N}` and `OAUTH_CLIENT_SECRET_{N}`.
+The environment variable names `AGENTCORE_CLIENT_ID_{N}` and `AGENTCORE_CLIENT_SECRET_{N}` are consistent with the `credentials-provider/agentcore-auth` naming convention.
 
 ### What Happens During Sync
 
@@ -637,7 +637,7 @@ The IAM user or role lacks required permissions. Attach the discovery policy fro
 
 #### "No OAuth2 M2M client created — see prerequisites"
 
-The CLI could not find OAuth2 credentials for a `CUSTOM_JWT` gateway. Either set `OAUTH_CLIENT_ID_{N}` / `OAUTH_CLIENT_SECRET_{N}` environment variables, or run the CLI interactively to enter credentials at the prompt.
+The CLI could not find OAuth2 credentials for a `CUSTOM_JWT` gateway. Either set `AGENTCORE_CLIENT_ID_{N}` / `AGENTCORE_CLIENT_SECRET_{N}` environment variables, or run the CLI interactively to enter credentials at the prompt.
 
 #### "Credentials validation failed — check client ID/secret"
 
