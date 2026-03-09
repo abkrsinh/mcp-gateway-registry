@@ -30,8 +30,16 @@ class AgentCoreScanner:
         self,
         region: str,
         timeout: int = DEFAULT_TIMEOUT,
+        session: boto3.Session | None = None,
     ) -> None:
-        """Initialize scanner with AWS region and timeout."""
+        """Initialize scanner with AWS region, timeout, and optional boto3 session.
+
+        Args:
+            region: AWS region to scan.
+            timeout: AWS API call timeout in seconds.
+            session: Optional boto3 session (e.g. from STS AssumeRole for
+                     cross-account scanning). Uses default credentials if None.
+        """
         self.region = region
         self.timeout = timeout
 
@@ -40,14 +48,21 @@ class AgentCoreScanner:
             read_timeout=timeout,
             retries={"max_attempts": 3, "mode": "standard"},
         )
-        self.client = boto3.client(
-            "bedrock-agentcore-control",
-            region_name=region,
-            config=boto_config,
-        )
+        if session:
+            self.client = session.client(
+                "bedrock-agentcore-control",
+                region_name=region,
+                config=boto_config,
+            )
+        else:
+            self.client = boto3.client(
+                "bedrock-agentcore-control",
+                region_name=region,
+                config=boto_config,
+            )
         logger.info(
             f"Initialized AgentCore scanner for region: {region} "
-            f"(timeout: {timeout}s)"
+            f"(timeout: {timeout}s, cross_account: {session is not None})"
         )
 
     # ------------------------------------------------------------------

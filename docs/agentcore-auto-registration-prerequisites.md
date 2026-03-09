@@ -200,6 +200,96 @@ Gateways with `NONE` authorizer require **no setup**. The CLI registers these ga
 
 ---
 
+## Cross-Account Scanning
+
+To scan AgentCore resources in other AWS accounts, you need an IAM role in each target account that the CLI can assume.
+
+### Target Account Role Setup
+
+In each target account, create an IAM role (default name: `AgentCoreSyncRole`) with:
+
+1. **Trust policy** — allows the caller's account to assume the role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::CALLER_ACCOUNT_ID:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {}
+    }
+  ]
+}
+```
+
+Replace `CALLER_ACCOUNT_ID` with the AWS account ID where the CLI runs. You can restrict the principal to a specific IAM user or role instead of `root` for tighter security.
+
+2. **Permissions policy** — the same AgentCore discovery policy from [IAM Permissions for Discovery](#iam-permissions-for-discovery):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AgentCoreDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agent:ListAgentGateways",
+        "bedrock-agent:GetAgentGateway",
+        "bedrock-agent:ListAgentRuntimes",
+        "bedrock-agent:GetAgentRuntime",
+        "bedrock-agent:ListTargets",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Caller Account Permissions
+
+The IAM user or role running the CLI also needs permission to assume the role in each target account:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeAgentCoreSyncRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::111111111111:role/AgentCoreSyncRole",
+        "arn:aws:iam::222222222222:role/AgentCoreSyncRole"
+      ]
+    }
+  ]
+}
+```
+
+Replace the account IDs and role name with your actual values.
+
+### Quick Setup (AWS CLI)
+
+```bash
+# In each target account, create the role:
+aws iam create-role \
+  --role-name AgentCoreSyncRole \
+  --assume-role-policy-document file://trust-policy.json
+
+aws iam put-role-policy \
+  --role-name AgentCoreSyncRole \
+  --policy-name AgentCoreDiscovery \
+  --policy-document file://discovery-policy.json
+```
+
+---
+
 ## Verification Checklist
 
 Before running `python -m cli.agentcore sync`, verify:
@@ -210,6 +300,8 @@ Before running `python -m cli.agentcore sync`, verify:
 - [ ] For `AWS_IAM` gateways: AWS credentials are available in the environment
 - [ ] The MCP Gateway Registry is running and accessible at the configured `REGISTRY_URL`
 - [ ] A valid registry auth token exists at the configured `--token-file` path
+- [ ] For cross-account scanning: `AgentCoreSyncRole` (or custom role) exists in each target account
+- [ ] For cross-account scanning: The caller has `sts:AssumeRole` permission for each target role
 
 ## Next Steps
 

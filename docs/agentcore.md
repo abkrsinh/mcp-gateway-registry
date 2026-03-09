@@ -595,6 +595,8 @@ python -m cli.agentcore list --region eu-west-1
 | `--gateways-only` | sync, list | `false` | Only process gateways |
 | `--runtimes-only` | sync, list | `false` | Only process runtimes |
 | `--output` | sync, list | `text` | Output format: `text` or `json` |
+| `--accounts` | sync, list | `AGENTCORE_ACCOUNTS` env or empty | Comma-separated AWS account IDs for cross-account scanning |
+| `--assume-role-name` | sync, list | `AGENTCORE_ASSUME_ROLE_NAME` env or `AgentCoreSyncRole` | IAM role name to assume in each target account |
 | `--debug` | sync, list | `false` | Enable DEBUG logging |
 | `--dry-run` | sync | `false` | Preview without registering or persisting credentials |
 | `--overwrite` | sync | `false` | Overwrite existing registrations |
@@ -616,6 +618,8 @@ python -m cli.agentcore list --region eu-west-1
 | `AGENTCORE_SERVER_NAME_{N}` | — | Friendly server name for gateway N |
 | `AGENTCORE_AUTHORIZER_TYPE_{N}` | — | Authorizer type: `CUSTOM_JWT`, `AWS_IAM`, or `NONE` |
 | `TOKEN_GENERATION_TIMEOUT` | `30` | Timeout in seconds for token generation |
+| `AGENTCORE_ACCOUNTS` | — | Comma-separated AWS account IDs for cross-account scanning |
+| `AGENTCORE_ASSUME_ROLE_NAME` | `AgentCoreSyncRole` | IAM role name to assume in each target account |
 
 The environment variable names `AGENTCORE_CLIENT_ID_{N}` and `AGENTCORE_CLIENT_SECRET_{N}` are consistent with the `credentials-provider/agentcore-auth` naming convention.
 
@@ -661,6 +665,49 @@ In `--dry-run` mode, the CLI performs discovery but does not register, persist c
 #### Timeout errors on AWS API calls
 
 Increase the timeout with `--timeout 60` (or higher). The default is 30 seconds.
+
+### Cross-Account Scanning
+
+The CLI can scan multiple AWS accounts in a single run. It assumes an IAM role in each target account to discover and register resources.
+
+#### Usage
+
+```bash
+# Scan two accounts
+python -m cli.agentcore sync --accounts 111111111111,222222222222
+
+# Scan with a custom role name
+python -m cli.agentcore sync --accounts 111111111111,222222222222 --assume-role-name MyCrossAccountRole
+
+# List resources across accounts
+python -m cli.agentcore list --accounts 111111111111,222222222222
+
+# JSON output includes account labels per resource
+python -m cli.agentcore list --accounts 111111111111,222222222222 --output json
+
+# Or use environment variables
+export AGENTCORE_ACCOUNTS=111111111111,222222222222
+export AGENTCORE_ASSUME_ROLE_NAME=AgentCoreSyncRole
+python -m cli.agentcore sync
+```
+
+#### How It Works
+
+1. The CLI parses the `--accounts` flag (or `AGENTCORE_ACCOUNTS` env var) into a list of account IDs.
+2. For each account, it calls `sts:AssumeRole` on `arn:aws:iam::{account_id}:role/{role_name}` to obtain temporary credentials.
+3. A boto3 session is created with those temporary credentials and passed to the scanner and registration builder.
+4. Discovery and registration proceed as normal, scoped to each account's resources.
+5. If `--accounts` is not provided, the CLI scans only the current account (default behavior).
+
+If `AssumeRole` fails for any account, the CLI stops and reports the error.
+
+#### IAM Role Setup
+
+Each target account needs an IAM role that:
+- Trusts the caller's account (the account running the CLI)
+- Has the AgentCore discovery permissions
+
+See the [Cross-Account IAM Prerequisites](agentcore-auto-registration-prerequisites.md#cross-account-scanning) for the trust policy and permissions setup.
 
 ## Next Steps
 

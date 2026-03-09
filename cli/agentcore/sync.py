@@ -42,12 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Environment variables:\n"
-            "  AWS_REGION              AWS region (default: us-east-1)\n"
-            "  REGISTRY_URL            Registry base URL\n"
-            "  REGISTRY_TOKEN_FILE     Path to registry auth token file\n"
-            "  OAUTH_DOMAIN               OAuth2 provider domain URL\n"
-            "  AGENTCORE_CLIENT_ID_{N}     OAuth2 client ID for gateway N\n"
-            "  AGENTCORE_CLIENT_SECRET_{N} OAuth2 client secret for gateway N\n"
+            "  AWS_REGION                    AWS region (default: us-east-1)\n"
+            "  REGISTRY_URL                  Registry base URL\n"
+            "  REGISTRY_TOKEN_FILE           Path to registry auth token file\n"
+            "  OAUTH_DOMAIN                  OAuth2 provider domain URL\n"
+            "  AGENTCORE_CLIENT_ID_{N}       OAuth2 client ID for gateway N\n"
+            "  AGENTCORE_CLIENT_SECRET_{N}   OAuth2 client secret for gateway N\n"
+            "  AGENTCORE_ACCOUNTS            Comma-separated account IDs (cross-account)\n"
+            "  AGENTCORE_ASSUME_ROLE_NAME    Role name to assume (default: AgentCoreSyncRole)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -99,12 +101,35 @@ def build_parser() -> argparse.ArgumentParser:
             help="Enable DEBUG logging",
         )
 
+    # -- cross-account arguments (shared by sync and list) ----------------
+    def add_cross_account_args(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument(
+            "--accounts",
+            default=os.environ.get("AGENTCORE_ACCOUNTS", ""),
+            help=(
+                "Comma-separated AWS account IDs to scan (cross-account). "
+                "Requires a role in each account that the caller can assume. "
+                "(default: current account only)"
+            ),
+        )
+        sub.add_argument(
+            "--assume-role-name",
+            default=os.environ.get(
+                "AGENTCORE_ASSUME_ROLE_NAME", "AgentCoreSyncRole"
+            ),
+            help=(
+                "IAM role name to assume in each target account "
+                "(default: AGENTCORE_ASSUME_ROLE_NAME env or AgentCoreSyncRole)"
+            ),
+        )
+
     # -- sync subcommand ---------------------------------------------------
     sync_parser = subparsers.add_parser(
         "sync",
         help="Discover and register AgentCore resources",
     )
     add_common_args(sync_parser)
+    add_cross_account_args(sync_parser)
     sync_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -138,8 +163,62 @@ def build_parser() -> argparse.ArgumentParser:
         help="Discover and display AgentCore resources without registering",
     )
     add_common_args(list_parser)
+    add_cross_account_args(list_parser)
 
     return parser
+
+
+# ---------------------------------------------------------------------------
+# Cross-account helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_account_ids(accounts_str: str) -> list[str]:
+    """Parse comma-separated account IDs, stripping whitespace."""
+    if not accounts_str or not accounts_str.strip():
+        return []
+    return [a.strip() for a in accounts_str.split(",") if a.strip()]
+
+
+def _assume_role_session(
+    account_id: str,
+    role_name: str,
+    region: str,
+) -> "boto3.Session":
+    """Assume an IAM role in a target account and return a boto3 Session.
+
+    Args:
+        account_id: Target AWS account ID.
+        role_name: IAM role name to assume in the target account.
+        region: AWS region for the STS call.
+
+    Returns:
+        boto3.Session with temporary credentials from the assumed role.
+
+    Raises:
+        botocore.exceptions.ClientError: If AssumeRole fails.
+    """
+    import boto3
+
+    role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
+    logger.info(f"Assuming role {role_arn} for cross-account access...")
+
+    sts = boto3.client("sts", region_name=region)
+    response = sts.assume_role(
+        RoleArn=role_arn,
+        RoleSessionName=f"agentcore-sync-{account_id}",
+        DurationSeconds=3600,
+    )
+    creds = response["Credentials"]
+
+    session = boto3.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+        region_name=region,
+    )
+    logger.info(f"Assumed role in account {account_id} successfully")
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +250,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
     )
     from api.registry_client import RegistryClient
 
-    scanner = AgentCoreScanner(region=args.region, timeout=args.timeout)
-    builder = RegistrationBuilder(region=args.region, visibility=args.visibility)
     registry = RegistryClient(registry_url=args.registry_url, token=token)
     cred_helper = CredentialHelper()
 
@@ -180,30 +257,65 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if not args.skip_token_generation:
         token_manager = TokenManager()
 
-    orchestrator = SyncOrchestrator(
-        scanner=scanner,
-        builder=builder,
-        registry_client=registry,
-        credential_helper=cred_helper,
-        token_manager=token_manager,
-        dry_run=args.dry_run,
-        overwrite=args.overwrite,
-        include_mcp_targets=args.include_mcp_targets,
-        skip_token_generation=args.skip_token_generation,
-        output_format=args.output,
-    )
+    # Determine accounts to scan
+    account_ids = _parse_account_ids(getattr(args, "accounts", ""))
+    role_name = getattr(args, "assume_role_name", "AgentCoreSyncRole")
 
-    # Scope filtering
-    if not args.runtimes_only:
-        orchestrator.sync_gateways()
-    if not args.gateways_only:
-        orchestrator.sync_runtimes()
+    # Build list of (label, session_or_none) pairs
+    # Empty list = current account only (session=None)
+    account_sessions: list[tuple[str, object]] = []
+    if account_ids:
+        for acct in account_ids:
+            try:
+                session = _assume_role_session(acct, role_name, args.region)
+                account_sessions.append((acct, session))
+            except Exception as e:
+                logger.error(f"Failed to assume role in account {acct}: {e}")
+                if args.output == "json":
+                    print(json.dumps({"error": f"AssumeRole failed for {acct}: {e}"}))
+                return 1
+    else:
+        account_sessions.append(("current", None))
 
-    # Post-registration token generation
-    orchestrator.generate_tokens()
+    # Run sync for each account
+    for label, session in account_sessions:
+        if len(account_sessions) > 1:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Syncing account: {label}")
+            logger.info(f"{'='*60}")
 
-    # Summary
-    orchestrator.print_summary()
+        scanner = AgentCoreScanner(
+            region=args.region, timeout=args.timeout, session=session
+        )
+        builder = RegistrationBuilder(
+            region=args.region, visibility=args.visibility, session=session
+        )
+
+        orchestrator = SyncOrchestrator(
+            scanner=scanner,
+            builder=builder,
+            registry_client=registry,
+            credential_helper=cred_helper,
+            token_manager=token_manager,
+            dry_run=args.dry_run,
+            overwrite=args.overwrite,
+            include_mcp_targets=args.include_mcp_targets,
+            skip_token_generation=args.skip_token_generation,
+            output_format=args.output,
+        )
+
+        # Scope filtering
+        if not args.runtimes_only:
+            orchestrator.sync_gateways()
+        if not args.gateways_only:
+            orchestrator.sync_runtimes()
+
+        # Post-registration token generation
+        orchestrator.generate_tokens()
+
+        # Summary
+        orchestrator.print_summary()
+
     return 0
 
 
@@ -216,41 +328,70 @@ def cmd_list(args: argparse.Namespace) -> int:
     """Execute the list subcommand: discover and display resources."""
     from .discovery import AgentCoreScanner
 
-    scanner = AgentCoreScanner(region=args.region, timeout=args.timeout)
+    # Determine accounts to scan
+    account_ids = _parse_account_ids(getattr(args, "accounts", ""))
+    role_name = getattr(args, "assume_role_name", "AgentCoreSyncRole")
 
-    gateways: list = []
-    runtimes: list = []
-    errors: list[str] = []
+    account_sessions: list[tuple[str, object]] = []
+    if account_ids:
+        for acct in account_ids:
+            try:
+                session = _assume_role_session(acct, role_name, args.region)
+                account_sessions.append((acct, session))
+            except Exception as e:
+                logger.error(f"Failed to assume role in account {acct}: {e}")
+                return 1
+    else:
+        account_sessions.append(("current", None))
 
-    if not args.runtimes_only:
-        try:
-            gateways = scanner.scan_gateways()
-        except Exception as e:
-            errors.append(f"Gateway scan error: {e}")
-            logger.error(f"Failed to scan gateways: {e}")
+    all_gateways: list = []
+    all_runtimes: list = []
+    all_errors: list[str] = []
 
-    if not args.gateways_only:
-        try:
-            runtimes = scanner.scan_runtimes()
-        except Exception as e:
-            errors.append(f"Runtime scan error: {e}")
-            logger.error(f"Failed to scan runtimes: {e}")
+    for label, session in account_sessions:
+        scanner = AgentCoreScanner(
+            region=args.region, timeout=args.timeout, session=session
+        )
+
+        if not args.runtimes_only:
+            try:
+                gateways = scanner.scan_gateways()
+                # Tag with account for multi-account output
+                if len(account_sessions) > 1:
+                    for gw in gateways:
+                        gw["_account"] = label
+                all_gateways.extend(gateways)
+            except Exception as e:
+                all_errors.append(f"[{label}] Gateway scan error: {e}")
+                logger.error(f"Failed to scan gateways in {label}: {e}")
+
+        if not args.gateways_only:
+            try:
+                runtimes = scanner.scan_runtimes()
+                if len(account_sessions) > 1:
+                    for rt in runtimes:
+                        rt["_account"] = label
+                all_runtimes.extend(runtimes)
+            except Exception as e:
+                all_errors.append(f"[{label}] Runtime scan error: {e}")
+                logger.error(f"Failed to scan runtimes in {label}: {e}")
 
     if args.output == "json":
         print(
             json.dumps(
                 {
                     "region": args.region,
-                    "gateways": gateways,
-                    "runtimes": runtimes,
-                    "errors": errors,
+                    "accounts": account_ids or ["current"],
+                    "gateways": all_gateways,
+                    "runtimes": all_runtimes,
+                    "errors": all_errors,
                 },
                 indent=2,
                 default=str,
             )
         )
     else:
-        _print_list_text(gateways, runtimes, args.region, errors)
+        _print_list_text(all_gateways, all_runtimes, args.region, all_errors)
 
     return 0
 
