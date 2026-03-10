@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     enable_wellknown_discovery: bool = True
     wellknown_cache_ttl: int = 300  # 5 minutes
 
+    # OpenTelemetry / OTLP settings (metrics-service)
+    otel_otlp_endpoint: str | None = None  # OTLP HTTP endpoint (e.g. https://otlp.example.com)
+    otel_otlp_export_interval_ms: int = 30000  # OTLP export interval in milliseconds
+    otel_exporter_otlp_metrics_temporality_preference: str = "cumulative"  # cumulative or delta
+
     # Security scanning settings (MCP Servers)
     security_scan_enabled: bool = True
     security_scan_on_registration: bool = True

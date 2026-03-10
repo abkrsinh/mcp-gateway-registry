@@ -162,6 +162,15 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
             ("wellknown_cache_ttl", "Cache TTL", False),
         ],
     },
+    "otel": {
+        "title": "OpenTelemetry / OTLP",
+        "order": 12,
+        "fields": [
+            ("otel_otlp_endpoint", "OTLP Endpoint", False),
+            ("otel_otlp_export_interval_ms", "Export Interval (ms)", False),
+            ("otel_exporter_otlp_metrics_temporality_preference", "Metrics Temporality", False),
+        ],
+    },
 }
 
 

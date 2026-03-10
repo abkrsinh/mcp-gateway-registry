@@ -155,6 +155,10 @@ services:
       - REGISTRY_STATIC_TOKEN_AUTH_ENABLED=${REGISTRY_STATIC_TOKEN_AUTH_ENABLED:-false}
       - REGISTRY_API_TOKEN=${REGISTRY_API_TOKEN:-}
       - MAX_TOKENS_PER_USER_PER_HOUR=${MAX_TOKENS_PER_USER_PER_HOUR:-100}
+      # OpenTelemetry / OTLP (mirrored for config panel visibility)
+      - OTEL_OTLP_ENDPOINT=${OTEL_OTLP_ENDPOINT:-}
+      - OTEL_OTLP_EXPORT_INTERVAL_MS=${OTEL_OTLP_EXPORT_INTERVAL_MS:-30000}
+      - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=${OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE:-cumulative}
     ports:
       - "80:8080"   # Map host 80 to container 8080 (non-root nginx)
       - "443:8443"  # Map host 443 to container 8443 (non-root nginx)
