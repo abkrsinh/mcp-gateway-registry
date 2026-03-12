@@ -14,8 +14,8 @@ This guide walks through configuring Okta as the identity provider for the MCP G
 3. Configure the application:
    - **Name**: `MCP Gateway Registry`
    - **Grant types**: Authorization Code, Refresh Token, Client Credentials
-   - **Sign-in redirect URIs**: `http://localhost:8080/callback` (dev) or your production callback URL
-   - **Sign-out redirect URIs**: `http://localhost:8080` (dev) or your production URL
+   - **Sign-in redirect URIs**: `http://localhost:8888/oauth2/callback/okta` (dev) or `https://your-auth-server-domain/oauth2/callback/okta` (production)
+   - **Sign-out redirect URIs**: `http://localhost` (dev) or your production URL
    - **Controlled access**: Allow everyone in your organization
 4. Click **Save** and copy the **Client ID** and **Client Secret** immediately
 

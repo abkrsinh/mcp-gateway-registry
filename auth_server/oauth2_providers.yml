@@ -57,6 +57,23 @@ providers:
     name_claim: "name"
     enabled: "${ENTRA_ENABLED}"
 
+  okta:
+    display_name: "Okta"
+    client_id: "${OKTA_CLIENT_ID}"
+    client_secret: "${OKTA_CLIENT_SECRET}"
+    auth_url: "https://${OKTA_DOMAIN}/oauth2/v1/authorize"
+    token_url: "https://${OKTA_DOMAIN}/oauth2/v1/token"
+    user_info_url: "https://${OKTA_DOMAIN}/oauth2/v1/userinfo"
+    logout_url: "https://${OKTA_DOMAIN}/oauth2/v1/logout"
+    scopes: ["openid", "email", "profile", "groups"]
+    response_type: "code"
+    grant_type: "authorization_code"
+    username_claim: "preferred_username"
+    groups_claim: "groups"
+    email_claim: "email"
+    name_claim: "name"
+    enabled: true
+
   github:
     display_name: "GitHub"
     client_id: "${GITHUB_CLIENT_ID}"

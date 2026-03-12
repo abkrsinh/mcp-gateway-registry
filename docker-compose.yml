@@ -108,6 +108,13 @@ services:
       - ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
       - ENTRA_CLIENT_SECRET=${ENTRA_CLIENT_SECRET}
       - ENTRA_ENABLED=${ENTRA_ENABLED:-false}
+      # Okta configuration
+      - OKTA_DOMAIN=${OKTA_DOMAIN:-}
+      - OKTA_CLIENT_ID=${OKTA_CLIENT_ID:-}
+      - OKTA_CLIENT_SECRET=${OKTA_CLIENT_SECRET:-}
+      - OKTA_M2M_CLIENT_ID=${OKTA_M2M_CLIENT_ID:-}
+      - OKTA_M2M_CLIENT_SECRET=${OKTA_M2M_CLIENT_SECRET:-}
+      - OKTA_API_TOKEN=${OKTA_API_TOKEN:-}
       # External Registry Configuration
       - EXTERNAL_REGISTRY_TAGS=${EXTERNAL_REGISTRY_TAGS:-anthropic-registry,workday-asor}
       - ASOR_ACCESS_TOKEN=${ASOR_ACCESS_TOKEN}
@@ -267,6 +274,13 @@ services:
       - ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
       - ENTRA_CLIENT_SECRET=${ENTRA_CLIENT_SECRET}
       - ENTRA_ENABLED=${ENTRA_ENABLED:-false}
+      # Okta configuration
+      - OKTA_DOMAIN=${OKTA_DOMAIN:-}
+      - OKTA_CLIENT_ID=${OKTA_CLIENT_ID:-}
+      - OKTA_CLIENT_SECRET=${OKTA_CLIENT_SECRET:-}
+      - OKTA_M2M_CLIENT_ID=${OKTA_M2M_CLIENT_ID:-}
+      - OKTA_M2M_CLIENT_SECRET=${OKTA_M2M_CLIENT_SECRET:-}
+      - OKTA_API_TOKEN=${OKTA_API_TOKEN:-}
       # Storage Backend Configuration
       - STORAGE_BACKEND=${STORAGE_BACKEND:-file}
       # DocumentDB/MongoDB Configuration (when STORAGE_BACKEND=documentdb or mongodb-ce)
