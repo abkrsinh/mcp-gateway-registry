@@ -15,25 +15,31 @@ This guide walks through configuring Okta as the identity provider for the MCP G
    - **Name**: `MCP Gateway Registry`
    - **Grant types**: Authorization Code, Refresh Token, Client Credentials
    - **Sign-in redirect URIs**: `http://localhost:8888/oauth2/callback/okta` (dev) or `https://your-auth-server-domain/oauth2/callback/okta` (production)
-   - **Sign-out redirect URIs**: `http://localhost` (dev) or your production URL
+   - **Sign-out redirect URIs**: `http://localhost:7860/logout` (dev) or `https://your-registry-domain/logout` (production)
    - **Controlled access**: Allow everyone in your organization
 4. Click **Save** and copy the **Client ID** and **Client Secret** immediately
 
-## Step 2: Configure Groups Claim in Tokens
+## Step 2: Configure Groups Claim in ID Tokens
 
-1. Go to **Security** → **API** → **Authorization Servers** → select **default**
-2. Go to the **Claims** tab → **Add Claim**
-3. Configure:
-   - **Name**: `groups`
-   - **Include in token type**: ID Token (Always) and Access Token (Always)
-   - **Value type**: Groups
-   - **Filter**: Matches regex `.*`
-4. Click **Create**
+The groups claim is configured on the application's Sign On tab using the legacy configuration. This uses the Okta Org Authorization Server (`/oauth2/v1/*`), which has a built-in `groups` scope.
+
+1. Go to **Applications** → your app → **Sign On** tab
+2. Scroll to the **Token claims (OIDC)** section and expand **Show legacy configuration**
+3. Under **Group Claims**, click **Edit**
+4. Set **Groups claim type** to **Filter**
+5. Set the name to `groups`, select **Matches regex**, and enter `.*`
+6. Click **Save**
+
+> **Note:** The Org Authorization Server and the "default" custom authorization server are different. This integration uses the Org Authorization Server, which natively supports the `groups` scope. Custom claims configured under Security → API → Authorization Servers → default will not apply to the Org Authorization Server.
 
 ## Step 3: Create Groups for Access Control
 
+Okta group names must match the group names in your registry's `scopes.yml`. The default configuration expects groups like `registry-admins` and `public-mcp-users`.
+
 1. Go to **Directory** → **Groups** → **Add Group**
-2. Create groups as needed (e.g., `mcp-admin`, `mcp-user`)
+2. Create groups that match your `scopes.yml` group mappings:
+   - `registry-admins` — full admin access to the registry
+   - `public-mcp-users` — read-only access to public MCP servers
 3. Assign users to groups via each group's **Assign people** tab
 
 ## Step 4: Create API Token (Optional)
@@ -82,7 +88,7 @@ OKTA_CLIENT_SECRET=your-client-secret-here
 
 ## Okta Endpoints (Auto-Derived)
 
-All endpoints are derived from `OKTA_DOMAIN`:
+All endpoints use the Org Authorization Server and are derived from `OKTA_DOMAIN`:
 
 | Endpoint | URL |
 |----------|-----|
@@ -112,11 +118,17 @@ curl -X POST https://dev-123456.okta.com/oauth2/v1/token \
 
 ## Troubleshooting
 
-**Can't find Client Secret after app creation**
-Regenerate it: App → General tab → Client Credentials → Edit → Regenerate Secret.
+**"Permission Required" error after login**
+Your Okta groups don't match the group names in `scopes.yml`. Create groups in Okta that match (e.g., `registry-admins`) and assign your user to them. See Step 3.
 
 **Groups not appearing in tokens**
-Verify the groups claim is configured in the Authorization Server (Step 2). Ensure the filter regex is `.*`.
+The groups claim must be configured on the app's Sign On tab under "Show legacy configuration", not on the Authorization Server's Claims tab. See Step 2. Also verify your user is assigned to at least one group.
+
+**"One or more scopes are not configured" error**
+This happens when using the default custom authorization server (`/oauth2/default/v1/*`) instead of the Org Authorization Server (`/oauth2/v1/*`). The Org Authorization Server has a built-in `groups` scope. Verify your endpoints use `/oauth2/v1/*`.
+
+**Can't find Client Secret after app creation**
+Regenerate it: App → General tab → Client Credentials → Edit → Regenerate Secret.
 
 **API token permission errors**
 Check **Security** → **Administrators** for the role assigned to the token. Create a custom admin role with the specific scopes needed.

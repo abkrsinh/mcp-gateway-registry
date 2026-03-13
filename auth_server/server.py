@@ -2601,6 +2601,39 @@ async def oauth2_callback(
                 logger.info(f"Raw user info from {provider}: {user_info}")
                 mapped_user = map_user_info(user_info, provider_config)
                 logger.info(f"Mapped user info from userInfo: {mapped_user}")
+        elif provider == "okta":
+            # For Okta, decode the ID token to get groups (userinfo doesn't include groups)
+            try:
+                if "id_token" in token_data:
+                    import jwt
+
+                    id_token_claims = jwt.decode(
+                        token_data["id_token"], options={"verify_signature": False}
+                    )
+                    logger.info(f"Okta ID token claims: {id_token_claims}")
+
+                    mapped_user = {
+                        "username": id_token_claims.get("preferred_username")
+                        or id_token_claims.get("email")
+                        or id_token_claims.get("sub"),
+                        "email": id_token_claims.get("email"),
+                        "name": id_token_claims.get("name")
+                        or id_token_claims.get("given_name"),
+                        "groups": id_token_claims.get("groups", []),
+                    }
+                    logger.info(f"User extracted from Okta ID token: {mapped_user}")
+                else:
+                    logger.warning("No ID token found in Okta response, falling back to userInfo")
+                    raise ValueError("Missing ID token")
+
+            except Exception as e:
+                logger.warning(
+                    f"Okta ID token parsing failed: {e}, falling back to userInfo endpoint"
+                )
+                user_info = await get_user_info(token_data["access_token"], provider_config)
+                logger.info(f"Raw user info from {provider}: {user_info}")
+                mapped_user = map_user_info(user_info, provider_config)
+                logger.info(f"Mapped user info from userInfo: {mapped_user}")
         else:
             # For other providers, use userInfo endpoint
             user_info = await get_user_info(token_data["access_token"], provider_config)
@@ -2835,6 +2868,16 @@ async def oauth2_logout(
                 logout_params["id_token_hint"] = id_token_hint
             logger.debug(
                 f"Entra ID logout params built: has_id_token_hint={bool(id_token_hint)}"
+            )
+        elif "okta" in provider.lower() or ".okta.com" in logout_url:
+            # Okta logout parameters
+            logout_params = {
+                "post_logout_redirect_uri": full_redirect_uri,
+            }
+            if id_token_hint:
+                logout_params["id_token_hint"] = id_token_hint
+            logger.debug(
+                f"Okta logout params built: has_id_token_hint={bool(id_token_hint)}"
             )
         else:
             # Cognito logout parameters (no id_token_hint support)

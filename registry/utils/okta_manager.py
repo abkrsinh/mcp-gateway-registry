@@ -24,6 +24,11 @@ OKTA_API_TOKEN: str = os.environ.get("OKTA_API_TOKEN", "")
 
 def _get_api_headers() -> dict[str, str]:
     """Get headers for Okta Admin API requests."""
+    if not OKTA_API_TOKEN:
+        raise ValueError(
+            "OKTA_API_TOKEN is not set. "
+            "Create an API token in Okta Admin Console → Security → API → Tokens."
+        )
     return {
         "Authorization": f"SSWS {OKTA_API_TOKEN}",
         "Accept": "application/json",
@@ -166,9 +171,15 @@ async def create_okta_human_user(
             f"{base_url}/users",
             headers=headers,
             json=user_data,
-            params={"activate": "true"},
+            params={"activate": "true" if password else "false"},
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            try:
+                error_body = response.json()
+            except Exception:
+                error_body = response.text
+            logger.error(f"Okta user creation failed ({response.status_code}): {error_body}")
+            raise ValueError(f"Okta user creation failed: {error_body}")
         created_user = response.json()
 
         # Assign to groups
