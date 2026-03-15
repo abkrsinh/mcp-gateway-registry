@@ -624,12 +624,12 @@ Log: `{ 13, "Build and Start All Services", DONE/FAILED, "Build time: ~Xmin, ser
 
 **Announce:** "Generating access tokens for all agents..."
 
-Script: [`credentials-provider/keycloak/generate_tokens.py`](https://github.com/agentic-community/mcp-gateway-registry/blob/main/credentials-provider/keycloak/generate_tokens.py)
+Script: [`credentials-provider/keycloak/get_m2m_token.py`](https://github.com/agentic-community/mcp-gateway-registry/blob/main/credentials-provider/keycloak/get_m2m_token.py)
 
 ```bash
 cd "${INSTALL_DIR}"
 
-uv run credentials-provider/keycloak/generate_tokens.py --all-agents 2>/dev/null
+uv run credentials-provider/keycloak/get_m2m_token.py --all-agents 2>/dev/null
 echo "Token generation exit code: $?"
 
 echo "=== Available token files ==="

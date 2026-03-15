@@ -75,26 +75,26 @@ COGNITO_CLIENT_SECRET=your_cognito_client_secret
 Generate a token using configuration file and environment variables:
 
 ```bash
-python generate_access_token.py
+python get_m2m_token.py
 ```
 
 ### Advanced Usage
 
 ```bash
 # Specify gateway ARN for reference
-python generate_access_token.py --gateway-arn arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/my-gateway
+python get_m2m_token.py --gateway-arn arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/my-gateway
 
 # Use custom config file
-python generate_access_token.py --config-file my-config.yaml
+python get_m2m_token.py --config-file my-config.yaml
 
 # Save token to custom file
-python generate_access_token.py --output-file my-token.txt
+python get_m2m_token.py --output-file my-token.txt
 
 # Use custom audience for Auth0
-python generate_access_token.py --audience "https://api.mycompany.com"
+python get_m2m_token.py --audience "https://api.mycompany.com"
 
 # Enable debug logging
-python generate_access_token.py --debug
+python get_m2m_token.py --debug
 ```
 
 ### Using as a Module
@@ -141,12 +141,12 @@ The utility generates:
 ## Example Output
 
 ```
-2024-07-31 10:30:15,p12345,{generate_access_token.py:89},INFO,Loaded configuration from config.yaml
-2024-07-31 10:30:15,p12345,{generate_access_token.py:156},INFO,Generating OAuth2 access token...
-2024-07-31 10:30:16,p12345,{generate_access_token.py:76},INFO,Successfully obtained Cognito access token
-2024-07-31 10:30:16,p12345,{generate_access_token.py:98},INFO,Access token saved to .access_token
-2024-07-31 10:30:16,p12345,{generate_access_token.py:100},INFO,Token expires in 3600 seconds
-2024-07-31 10:30:16,p12345,{generate_access_token.py:178},INFO,Token generation completed successfully! Token saved to .access_token
+2024-07-31 10:30:15,p12345,{get_m2m_token.py:89},INFO,Loaded configuration from config.yaml
+2024-07-31 10:30:15,p12345,{get_m2m_token.py:156},INFO,Generating OAuth2 access token...
+2024-07-31 10:30:16,p12345,{get_m2m_token.py:76},INFO,Successfully obtained Cognito access token
+2024-07-31 10:30:16,p12345,{get_m2m_token.py:98},INFO,Access token saved to .access_token
+2024-07-31 10:30:16,p12345,{get_m2m_token.py:100},INFO,Token expires in 3600 seconds
+2024-07-31 10:30:16,p12345,{get_m2m_token.py:178},INFO,Token generation completed successfully! Token saved to .access_token
 ```
 
 ## Troubleshooting
@@ -176,7 +176,7 @@ The utility generates:
 Enable debug logging to see detailed information:
 
 ```bash
-python generate_access_token.py --debug
+python get_m2m_token.py --debug
 ```
 
 ## Dependencies

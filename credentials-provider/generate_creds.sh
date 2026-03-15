@@ -204,7 +204,7 @@ run_keycloak_auth() {
     log_info "Keycloak URL: $keycloak_url"
     log_info "Keycloak Realm: $keycloak_realm"
 
-    local cmd="uv run '$SCRIPT_DIR/keycloak/generate_tokens.py' --all-agents"
+    local cmd="uv run '$SCRIPT_DIR/keycloak/get_m2m_token.py' --all-agents"
     cmd="$cmd --keycloak-url '$keycloak_url'"
     cmd="$cmd --realm '$keycloak_realm'"
 
@@ -241,7 +241,7 @@ run_entra_auth() {
         export ENTRA_LOGIN_BASE_URL="$ENTRA_LOGIN_BASE_URL_ARG"
     fi
 
-    local cmd="uv run '$SCRIPT_DIR/entra/generate_tokens.py' --all-agents"
+    local cmd="uv run '$SCRIPT_DIR/entra/get_m2m_token.py' --all-agents"
 
     if [ -n "$IDENTITIES_FILE" ]; then
         cmd="$cmd --identities-file '$IDENTITIES_FILE'"

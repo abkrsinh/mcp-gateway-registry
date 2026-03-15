@@ -927,7 +927,7 @@ Ensure `AUTH_PROVIDER=entra` is set in your `.env` file.
 
 Or with a custom identities file:
 ```bash
-uv run credentials-provider/entra/generate_tokens.py \
+uv run credentials-provider/entra/get_m2m_token.py \
   --identities-file /path/to/my-identities.json \
   --output-dir .oauth-tokens \
   --verbose

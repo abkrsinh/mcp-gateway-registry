@@ -536,7 +536,7 @@ Generate access tokens for all configured agents and users:
 
 ```bash
 # Generate access tokens for all agents
-./credentials-provider/keycloak/generate_tokens.py --all-agents
+./credentials-provider/keycloak/get_m2m_token.py --all-agents
 ```
 
 This will create access token files (both `.json` and `.env` formats) for all Keycloak service accounts in the `.oauth-tokens/` directory.
