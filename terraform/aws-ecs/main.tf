@@ -130,6 +130,16 @@ module "mcp_gateway" {
   entra_client_id     = var.entra_client_id
   entra_client_secret = var.entra_client_secret
 
+  # Okta configuration
+  okta_enabled           = var.okta_enabled
+  okta_domain            = var.okta_domain
+  okta_client_id         = var.okta_client_id
+  okta_client_secret     = var.okta_client_secret
+  okta_m2m_client_id     = var.okta_m2m_client_id
+  okta_m2m_client_secret = var.okta_m2m_client_secret
+  okta_api_token         = var.okta_api_token
+  okta_auth_server_id    = var.okta_auth_server_id
+
   # OAuth token storage
   oauth_store_tokens_in_session = var.oauth_store_tokens_in_session
 

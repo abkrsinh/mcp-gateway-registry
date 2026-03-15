@@ -442,6 +442,61 @@ variable "entra_client_secret" {
 }
 
 # =============================================================================
+# OKTA CONFIGURATION
+# =============================================================================
+
+variable "okta_enabled" {
+  description = "Enable Okta as authentication provider"
+  type        = bool
+  default     = false
+}
+
+variable "okta_domain" {
+  description = "Okta domain (e.g., dev-12345678.okta.com or your-org.okta.com)"
+  type        = string
+  default     = ""
+}
+
+variable "okta_client_id" {
+  description = "Okta Web Application (client) ID"
+  type        = string
+  default     = ""
+}
+
+variable "okta_client_secret" {
+  description = "Okta Client Secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_m2m_client_id" {
+  description = "Okta M2M Client ID (for service account operations)"
+  type        = string
+  default     = ""
+}
+
+variable "okta_m2m_client_secret" {
+  description = "Okta M2M Client Secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_api_token" {
+  description = "Okta API Token (for IAM management operations)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_auth_server_id" {
+  description = "Okta Custom Authorization Server ID (optional - for M2M tokens)"
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
 # OAUTH TOKEN STORAGE CONFIGURATION
 # =============================================================================
 
