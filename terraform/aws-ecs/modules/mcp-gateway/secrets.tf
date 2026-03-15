@@ -197,6 +197,75 @@ resource "aws_secretsmanager_secret_version" "entra_client_secret" {
 }
 
 
+# Okta client secret (for OAuth authentication)
+resource "aws_secretsmanager_secret" "okta_client_secret" {
+  count = var.okta_enabled ? 1 : 0
+
+  name_prefix             = "${local.name_prefix}-okta-client-secret-"
+  description             = "Okta client secret for OAuth authentication"
+  recovery_window_in_days = 0
+  kms_key_id              = aws_kms_key.secrets.id
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "okta_client_secret" {
+  count = var.okta_enabled ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.okta_client_secret[0].id
+  secret_string = var.okta_client_secret
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+
+# Okta M2M client secret (for service account operations)
+resource "aws_secretsmanager_secret" "okta_m2m_client_secret" {
+  count = var.okta_enabled ? 1 : 0
+
+  name_prefix             = "${local.name_prefix}-okta-m2m-client-secret-"
+  description             = "Okta M2M client secret for service account operations"
+  recovery_window_in_days = 0
+  kms_key_id              = aws_kms_key.secrets.id
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "okta_m2m_client_secret" {
+  count = var.okta_enabled ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.okta_m2m_client_secret[0].id
+  secret_string = var.okta_m2m_client_secret
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+
+# Okta API token (for management operations)
+resource "aws_secretsmanager_secret" "okta_api_token" {
+  count = var.okta_enabled ? 1 : 0
+
+  name_prefix             = "${local.name_prefix}-okta-api-token-"
+  description             = "Okta API token for IAM management operations"
+  recovery_window_in_days = 0
+  kms_key_id              = aws_kms_key.secrets.id
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "okta_api_token" {
+  count = var.okta_enabled ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.okta_api_token[0].id
+  secret_string = var.okta_api_token
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+
 # Metrics API key (for metrics-service authentication)
 resource "random_password" "metrics_api_key" {
   count   = var.enable_observability ? 1 : 0

@@ -5,6 +5,10 @@ terraform.tfstate
 terraform.tfstate.backup
 *.tfvars
 !terraform.tfvars.example
+# Provider-specific tfvars files (not committed - copy to terraform.tfvars to use)
+# terraform.tfvars.keycloak
+# terraform.tfvars.entra
+# terraform.tfvars.okta
 
 # Crash logs
 crash.log

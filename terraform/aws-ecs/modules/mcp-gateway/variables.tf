@@ -510,6 +510,61 @@ variable "entra_client_secret" {
   sensitive   = true
 }
 
+# =============================================================================
+# OKTA CONFIGURATION
+# =============================================================================
+
+variable "okta_enabled" {
+  description = "Enable Okta as authentication provider"
+  type        = bool
+  default     = false
+}
+
+variable "okta_domain" {
+  description = "Okta domain (e.g., your-org.okta.com)"
+  type        = string
+  default     = ""
+}
+
+variable "okta_client_id" {
+  description = "Okta Application (client) ID"
+  type        = string
+  default     = ""
+}
+
+variable "okta_client_secret" {
+  description = "Okta Client Secret (Application secret value)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_m2m_client_id" {
+  description = "Okta M2M client ID for service account operations"
+  type        = string
+  default     = ""
+}
+
+variable "okta_m2m_client_secret" {
+  description = "Okta M2M client secret for service account operations"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_api_token" {
+  description = "Okta API token for management operations"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "okta_auth_server_id" {
+  description = "Okta Custom Authorization Server ID (for M2M tokens). Leave empty to use default Org Authorization Server."
+  type        = string
+  default     = ""
+}
+
 variable "registry_static_token_auth_enabled" {
   description = "Enable static token auth for Registry API (IdP-independent access using REGISTRY_API_TOKEN)"
   type        = bool
