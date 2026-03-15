@@ -197,6 +197,14 @@ services:
       - ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
       - ENTRA_CLIENT_SECRET=${ENTRA_CLIENT_SECRET}
       - ENTRA_ENABLED=${ENTRA_ENABLED:-false}
+      # Okta configuration
+      - OKTA_DOMAIN=${OKTA_DOMAIN:-}
+      - OKTA_CLIENT_ID=${OKTA_CLIENT_ID:-}
+      - OKTA_CLIENT_SECRET=${OKTA_CLIENT_SECRET:-}
+      - OKTA_M2M_CLIENT_ID=${OKTA_M2M_CLIENT_ID:-}
+      - OKTA_M2M_CLIENT_SECRET=${OKTA_M2M_CLIENT_SECRET:-}
+      - OKTA_API_TOKEN=${OKTA_API_TOKEN:-}
+      - OKTA_AUTH_SERVER_ID=${OKTA_AUTH_SERVER_ID:-}
       # Storage Backend Configuration
       - STORAGE_BACKEND=${STORAGE_BACKEND:-file}
       # DocumentDB/MongoDB Configuration (when STORAGE_BACKEND=documentdb or mongodb-ce)

@@ -8,15 +8,16 @@ import {
   ClipboardDocumentIcon,
   EyeIcon,
   EyeSlashIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
-import { useIAMUsers, useIAMGroups, createM2MAccount, deleteUser, CreateM2MPayload, M2MCredentials } from '../hooks/useIAM';
+import { useIAMUsers, useIAMGroups, createM2MAccount, deleteUser, updateUserGroups, CreateM2MPayload, M2MCredentials, IAMUser } from '../hooks/useIAM';
 import DeleteConfirmation from './DeleteConfirmation';
 
 interface IAMM2MProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-type View = 'list' | 'create' | 'credentials';
+type View = 'list' | 'create' | 'credentials' | 'edit';
 
 interface FormErrors {
   name?: string;
@@ -43,6 +44,10 @@ const IAMM2M: React.FC<IAMM2MProps> = ({ onShowToast }) => {
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // Edit state
+  const [editTarget, setEditTarget] = useState<IAMUser | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const m2mAccounts = useMemo(() => {
     // M2M service accounts are identified by their email domain.
@@ -125,6 +130,40 @@ const IAMM2M: React.FC<IAMM2MProps> = ({ onShowToast }) => {
     await refetch();
   };
 
+  const handleEdit = (user: IAMUser) => {
+    setEditTarget(user);
+    setFormGroups(new Set(user.groups || []));
+    setView('edit');
+  };
+
+  const handleUpdate = async () => {
+    if (!editTarget) return;
+
+    // Validate
+    const newErrors: FormErrors = {};
+    if (formGroups.size === 0) newErrors.groups = 'At least one group is required';
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
+
+    setIsUpdating(true);
+    try {
+      await updateUserGroups(editTarget.username, Array.from(formGroups));
+      onShowToast(`Groups updated for "${editTarget.username}"`, 'success');
+      setEditTarget(null);
+      setFormGroups(new Set());
+      setView('list');
+      await refetch();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const message = Array.isArray(detail)
+        ? detail.map((d: any) => d.msg).join(', ')
+        : detail || 'Failed to update groups';
+      onShowToast(message, 'error');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   // ─── Credentials View (after creation) ────────────────────────
   if (view === 'credentials' && credentials) {
     return (
@@ -184,6 +223,57 @@ const IAMM2M: React.FC<IAMM2MProps> = ({ onShowToast }) => {
           <ArrowLeftIcon className="h-4 w-4 mr-1" />
           Back to M2M Accounts List
         </button>
+      </div>
+    );
+  }
+
+  // ─── Edit View ────────────────────────────────────────────────
+  if (view === 'edit' && editTarget) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            IAM &gt; M2M Accounts &gt; Edit "{editTarget.username}"
+          </h2>
+          <button onClick={() => { setFormGroups(new Set()); setEditTarget(null); setErrors({}); setView('list'); }}
+            className="flex items-center text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+            <ArrowLeftIcon className="h-4 w-4 mr-1" /> Back to List
+          </button>
+        </div>
+
+        <div className="space-y-4 max-w-lg">
+          <div>
+            <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">Groups *</label>
+            <div className={`space-y-2 max-h-48 overflow-y-auto rounded-lg p-3 ${
+              errors.groups ? 'border-2 border-red-500' : 'border border-gray-200 dark:border-gray-700'
+            }`}>
+              {groups.length === 0 ? (
+                <p className="text-xs text-gray-400">No groups available</p>
+              ) : (
+                groups.map((g) => (
+                  <label key={g.name} className="flex items-center space-x-2 cursor-pointer">
+                    <input type="checkbox" checked={formGroups.has(g.name)}
+                      onChange={() => { toggleGroup(g.name); if (errors.groups) setErrors((p) => ({ ...p, groups: undefined })); }}
+                      className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500" />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">{g.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            {errors.groups && <p className="mt-1 text-sm text-red-500">{errors.groups}</p>}
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <button onClick={() => { setFormGroups(new Set()); setEditTarget(null); setErrors({}); setView('list'); }}
+            className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600">
+            Cancel
+          </button>
+          <button onClick={handleUpdate} disabled={isUpdating}
+            className="px-4 py-2 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            {isUpdating ? 'Updating...' : 'Update Groups'}
+          </button>
+        </div>
       </div>
     );
   }
@@ -316,9 +406,14 @@ const IAMM2M: React.FC<IAMM2MProps> = ({ onShowToast }) => {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button onClick={() => setDeleteTarget(u.username)} className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400" title="Delete account">
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center justify-end space-x-2">
+                        <button onClick={() => handleEdit(u)} className="p-1 text-gray-400 hover:text-purple-500 dark:hover:text-purple-400" title="Edit groups">
+                          <PencilIcon className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => setDeleteTarget(u.username)} className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400" title="Delete account">
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {deleteTarget === u.username && (

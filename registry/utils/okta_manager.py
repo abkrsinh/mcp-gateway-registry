@@ -466,6 +466,7 @@ async def create_okta_service_account(
         "client_id": client_id,
         "client_secret": client_secret,
         "groups": group_names,
+        "okta_app_id": created_app.get("id"),  # Include Okta app ID
     }
 
 

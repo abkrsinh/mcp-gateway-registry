@@ -115,6 +115,7 @@ services:
       - OKTA_M2M_CLIENT_ID=${OKTA_M2M_CLIENT_ID:-}
       - OKTA_M2M_CLIENT_SECRET=${OKTA_M2M_CLIENT_SECRET:-}
       - OKTA_API_TOKEN=${OKTA_API_TOKEN:-}
+      - OKTA_AUTH_SERVER_ID=${OKTA_AUTH_SERVER_ID:-}
       # External Registry Configuration
       - EXTERNAL_REGISTRY_TAGS=${EXTERNAL_REGISTRY_TAGS:-anthropic-registry,workday-asor}
       - ASOR_ACCESS_TOKEN=${ASOR_ACCESS_TOKEN}
@@ -281,6 +282,7 @@ services:
       - OKTA_M2M_CLIENT_ID=${OKTA_M2M_CLIENT_ID:-}
       - OKTA_M2M_CLIENT_SECRET=${OKTA_M2M_CLIENT_SECRET:-}
       - OKTA_API_TOKEN=${OKTA_API_TOKEN:-}
+      - OKTA_AUTH_SERVER_ID=${OKTA_AUTH_SERVER_ID:-}
       # Storage Backend Configuration
       - STORAGE_BACKEND=${STORAGE_BACKEND:-file}
       # DocumentDB/MongoDB Configuration (when STORAGE_BACKEND=documentdb or mongodb-ce)

@@ -73,16 +73,32 @@ class OktaProvider(AuthProvider):
         self._jwks_cache_time: float = 0
         self._jwks_cache_ttl: int = 3600  # 1 hour
 
-        # Okta endpoints (default org authorization server)
-        base_url = f"https://{self.okta_domain}"
-        self.auth_url = f"{base_url}/oauth2/v1/authorize"
-        self.token_url = f"{base_url}/oauth2/v1/token"
-        self.userinfo_url = f"{base_url}/oauth2/v1/userinfo"
-        self.jwks_url = f"{base_url}/oauth2/v1/keys"
-        self.logout_url = f"{base_url}/oauth2/v1/logout"
-        self.issuer = base_url
+        # Check for custom authorization server
+        auth_server_id = os.environ.get("OKTA_AUTH_SERVER_ID", "")
 
-        logger.info(f"Initialized Okta provider for domain '{self.okta_domain}'")
+        # Okta endpoints (org or custom authorization server)
+        base_url = f"https://{self.okta_domain}"
+        if auth_server_id:
+            # Custom authorization server endpoints
+            oauth2_base = f"{base_url}/oauth2/{auth_server_id}/v1"
+            self.auth_url = f"{oauth2_base}/authorize"
+            self.token_url = f"{oauth2_base}/token"
+            self.userinfo_url = f"{oauth2_base}/userinfo"
+            self.jwks_url = f"{oauth2_base}/keys"
+            self.logout_url = f"{oauth2_base}/logout"
+            self.issuer = f"{base_url}/oauth2/{auth_server_id}"
+            logger.info(
+                f"Initialized Okta provider with custom authorization server '{auth_server_id}'"
+            )
+        else:
+            # Default org authorization server endpoints
+            self.auth_url = f"{base_url}/oauth2/v1/authorize"
+            self.token_url = f"{base_url}/oauth2/v1/token"
+            self.userinfo_url = f"{base_url}/oauth2/v1/userinfo"
+            self.jwks_url = f"{base_url}/oauth2/v1/keys"
+            self.logout_url = f"{base_url}/oauth2/v1/logout"
+            self.issuer = base_url
+            logger.info(f"Initialized Okta provider for domain '{self.okta_domain}'")
 
     def validate_token(self, token: str, **kwargs: Any) -> dict[str, Any]:
         """Validate Okta JWT token.
@@ -142,17 +158,33 @@ class OktaProvider(AuthProvider):
             if self.m2m_client_id and self.m2m_client_id != self.client_id:
                 valid_audiences.append(self.m2m_client_id)
 
+            # For custom authorization servers, M2M tokens use API identifier as audience
+            # Decode without audience validation first to check token type
+            unverified_claims = jwt.decode(
+                token,
+                options={"verify_signature": False}
+            )
+
+            # Check if this is an M2M token (has cid but audience is not client_id)
+            is_m2m_token = 'cid' in unverified_claims
+            aud_claim = unverified_claims.get('aud', '')
+            aud_is_client_id = aud_claim in valid_audiences
+
+            # For M2M tokens with custom auth server, skip audience validation
+            # since Okta uses API identifier (e.g., "api://ai-registry") as audience
+            verify_audience = not (is_m2m_token and not aud_is_client_id)
+
             # Validate and decode token
             claims = jwt.decode(
                 token,
                 signing_key,
                 algorithms=['RS256'],
                 issuer=self.issuer,
-                audience=valid_audiences,
+                audience=valid_audiences if verify_audience else None,
                 options={
                     "verify_exp": True,
                     "verify_iat": True,
-                    "verify_aud": True,
+                    "verify_aud": verify_audience,
                 }
             )
 

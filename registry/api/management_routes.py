@@ -141,6 +141,35 @@ async def management_list_users(
         logger.error(f"[LIST_USERS] Exception calling list_users: {type(exc).__name__}: {exc}")
         raise _translate_iam_error(exc) from exc
 
+    # Include M2M clients from MongoDB for all providers
+    try:
+        from registry.repositories.documentdb.client import get_documentdb_client
+
+        db = await get_documentdb_client()
+        collection = db["idp_m2m_clients"]
+
+        # Query M2M clients from MongoDB
+        cursor = collection.find({})
+        m2m_docs = await cursor.to_list(length=None)
+
+        # Add M2M clients as users with special email pattern
+        for doc in m2m_docs:
+            client_id = doc.get("client_id", "")
+            raw_users.append({
+                "id": client_id,
+                "username": doc.get("name", client_id),
+                "email": f"{client_id}@service-account.local",  # Special email pattern for M2M
+                "firstName": None,
+                "lastName": None,
+                "enabled": doc.get("enabled", True),
+                "groups": doc.get("groups", []),
+            })
+
+        logger.debug(f"[LIST_USERS] Added {len(m2m_docs)} M2M clients from MongoDB")
+    except Exception as e:
+        logger.warning(f"Failed to retrieve M2M clients from MongoDB: {e}")
+        # Don't fail the entire operation if MongoDB query fails
+
     summaries = [
         UserSummary(
             id=user.get("id", ""),
@@ -172,6 +201,36 @@ async def management_create_m2m_user(
             groups=payload.groups,
             description=payload.description,
         )
+
+        # Store M2M client in MongoDB for all providers (authorization database)
+        try:
+            from datetime import datetime
+            from os import environ
+            from registry.repositories.documentdb.client import get_documentdb_client
+
+            db = await get_documentdb_client()
+            collection = db["idp_m2m_clients"]
+
+            provider = environ.get("AUTH_PROVIDER", "keycloak").lower()
+
+            client_doc = {
+                "client_id": result.get("client_id"),
+                "name": payload.name,
+                "description": payload.description,
+                "groups": payload.groups,
+                "enabled": True,
+                "provider": provider,
+                "idp_app_id": result.get("okta_app_id") or result.get("client_id"),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+
+            await collection.insert_one(client_doc)
+            logger.info(f"Stored M2M client in MongoDB: {result.get('client_id')} (provider: {provider})")
+        except Exception as e:
+            logger.warning(f"Failed to store M2M client in MongoDB: {e}")
+            # Don't fail the entire operation if MongoDB storage fails
+
     except Exception as exc:
         raise _translate_iam_error(exc) from exc
 
@@ -239,9 +298,60 @@ async def management_update_user_groups(
 
     This endpoint calculates the diff between current and desired groups,
     then adds or removes group memberships as needed.
+
+    For M2M accounts (service accounts), updates the DocumentDB record directly.
+    For human users, delegates to the IdP manager.
     """
+    from datetime import datetime
+
     _require_admin(user_context)
 
+    # Check if this is an M2M account by looking it up in DocumentDB
+    try:
+        from registry.repositories.documentdb.client import get_documentdb_client
+
+        db = await get_documentdb_client()
+        collection = db["idp_m2m_clients"]
+
+        # Try to find M2M client by name (username is the name for M2M accounts in the UI)
+        m2m_doc = await collection.find_one({"name": username})
+
+        if m2m_doc:
+            # This is an M2M account - update DocumentDB directly
+            logger.info(f"Updating groups for M2M account: {username}")
+
+            current_groups = m2m_doc.get("groups", [])
+            new_groups = payload.groups
+
+            added = list(set(new_groups) - set(current_groups))
+            removed = list(set(current_groups) - set(new_groups))
+
+            # Update the groups in DocumentDB
+            await collection.update_one(
+                {"name": username},
+                {
+                    "$set": {
+                        "groups": new_groups,
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+
+            logger.info(
+                f"Updated M2M account {username}: added {added}, removed {removed}"
+            )
+
+            return UpdateUserGroupsResponse(
+                username=username,
+                groups=new_groups,
+                added=added,
+                removed=removed,
+            )
+    except Exception as e:
+        logger.warning(f"Error checking/updating M2M account in DocumentDB: {e}")
+        # Continue to IdP update if DocumentDB check fails
+
+    # If not an M2M account, update through IdP
     iam = get_iam_manager()
 
     try:
