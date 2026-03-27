@@ -29,7 +29,7 @@ REGISTRY_URL = os.getenv("REGISTRY_BASE_URL", "http://localhost")
 # Input validation constants
 MAX_QUERY_LENGTH: int = 500
 MIN_TOP_N: int = 1
-MAX_TOP_N: int = 100
+MAX_TOP_N: int = 50
 
 logger.info(f"Registry URL: {REGISTRY_URL}")
 
@@ -315,7 +315,7 @@ async def intelligent_tool_finder(
 
     Args:
         query: Natural language description of what you want to do
-        top_n: Number of results to return (default: 5, max: 100)
+        top_n: Number of results to return (default: 5, max: 50)
 
     Returns:
         Dictionary containing results, query, total_results, and status
@@ -334,7 +334,7 @@ async def intelligent_tool_finder(
             response = await client.post(
                 f"{REGISTRY_URL}/api/search/semantic",
                 headers=headers,
-                json={"query": query, "entity_type": "tool", "top_k": top_n},
+                json={"query": query, "entity_types": ["mcp_server", "tool"], "max_results": top_n},
             )
             response.raise_for_status()
             data = response.json()
@@ -357,6 +357,9 @@ async def intelligent_tool_finder(
                         path=server_path,
                     ).model_dump()
                 )
+
+        # Enforce client-side limit (safety net in case registry returns more)
+        result_list = result_list[:top_n]
 
         return {
             "results": result_list,
