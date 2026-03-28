@@ -12,6 +12,7 @@ Architecture:
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -27,6 +28,11 @@ from schemas import HeartbeatEvent, StartupEvent
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# HMAC signing key — must match the key in registry/core/telemetry.py.
+# This is NOT a secret. It prevents casual abuse (random curl requests)
+# by requiring callers to compute a valid HMAC over the request body.
+TELEMETRY_SIGNING_KEY = "mcp-registry-telemetry-v1-a7f3b9c2e1d4"
 
 # AWS clients (lazy-init for testability without credentials)
 dynamodb = None
@@ -51,7 +57,7 @@ RATE_LIMIT_MAX_REQUESTS = 10
 
 # Globals for connection pooling (reused across warm Lambda invocations)
 _mongo_client: pymongo.MongoClient | None = None
-_mongo_database: pymongo.database.Database | None = None
+_mongo_database = None  # pymongo Database instance
 _credentials: dict | None = None
 
 
@@ -73,7 +79,7 @@ def _get_credentials() -> dict:
         raise
 
 
-def _get_database() -> pymongo.database.Database:
+def _get_database():
     """Get DocumentDB database client (singleton, reused across invocations)."""
     global _mongo_client, _mongo_database
 
@@ -89,8 +95,9 @@ def _get_database() -> pymongo.database.Database:
         f"mongodb://{username}:{password}@"
         f"{DOCUMENTDB_ENDPOINT}/{db_name}?"
         f"authMechanism=SCRAM-SHA-1&authSource=admin"
-        f"&tls=true&retryWrites=false"
-        f"&connectTimeoutMS=5000&serverSelectionTimeoutMS=5000"
+        f"&tls=true&tlsAllowInvalidCertificates=true&retryWrites=false"
+        f"&directConnection=true"
+        f"&connectTimeoutMS=10000&serverSelectionTimeoutMS=10000"
     )
 
     logger.info(f"Connecting to DocumentDB at {DOCUMENTDB_ENDPOINT}")
@@ -102,6 +109,28 @@ def _get_database() -> pymongo.database.Database:
     logger.info("Connected to DocumentDB")
 
     return _mongo_database
+
+
+def _verify_signature(body: str, signature: str) -> bool:
+    """Verify HMAC-SHA256 signature of the request body.
+
+    Args:
+        body: The raw request body string.
+        signature: The hex-encoded HMAC signature from the header.
+
+    Returns:
+        True if the signature is valid, False otherwise.
+    """
+    if not signature:
+        return False
+
+    expected = hmac.new(
+        TELEMETRY_SIGNING_KEY.encode(),
+        body.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
 
 
 def _hash_ip(ip: str) -> str:
@@ -176,7 +205,7 @@ def _store_event(event_type: str, payload: dict) -> None:
 
     result = collection.insert_one(document)
     logger.info(
-        f"Stored {event_type} event: instance_id={payload.get('instance_id', 'unknown')[:8]}... "
+        f"Stored {event_type} event: registry_id={payload.get('registry_id', 'unknown')} "
         f"doc_id={result.inserted_id}"
     )
 
@@ -191,6 +220,14 @@ def lambda_handler(event: dict, context: dict) -> dict:
         # Rate limit by hashed IP
         source_ip = event.get("requestContext", {}).get("http", {}).get("sourceIp", "unknown")
         if not _check_rate_limit(_hash_ip(source_ip)):
+            return {"statusCode": 204}
+
+        # Verify HMAC signature (reject unsigned or forged requests)
+        headers = event.get("headers", {})
+        signature = headers.get("x-telemetry-signature", "")
+        raw_body = event.get("body", "")
+        if not _verify_signature(raw_body, signature):
+            logger.warning(f"Invalid or missing signature from {_hash_ip(source_ip)[:8]}...")
             return {"statusCode": 204}
 
         # Parse body

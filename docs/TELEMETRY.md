@@ -10,30 +10,88 @@ The MCP Gateway Registry collects anonymous usage telemetry to understand adopti
 
 Sent once at startup:
 
-- **Version**: Registry version (e.g., "1.0.16")
-- **Python Version**: Python runtime (e.g., "3.12")
-- **OS**: Operating system (linux, darwin, windows)
-- **Architecture**: CPU architecture (x86_64, arm64, aarch64)
-- **Deployment Mode**: with-gateway or registry-only
-- **Registry Mode**: full, skills-only, mcp-servers-only, agents-only
-- **Storage Backend**: file, documentdb, mongodb-ce
-- **Auth Provider**: cognito, keycloak, entra, github, google
-- **Federation**: Whether federation is enabled (true/false)
-- **Timestamp**: Event timestamp
+| Field | Example | Description |
+|-------|---------|-------------|
+| `registry_id` | `c546a650-...` | Registry Card UUID (public, not PII) |
+| `v` | `1.0.16` | Registry version |
+| `py` | `3.12` | Python version (major.minor) |
+| `os` | `linux` | Operating system (linux, darwin, windows) |
+| `arch` | `x86_64` | CPU architecture |
+| `cloud` | `aws` | Cloud provider (aws, gcp, azure, unknown) |
+| `compute` | `ecs` | Compute platform (ecs, eks, kubernetes, docker, ec2, unknown) |
+| `mode` | `with-gateway` | Deployment mode |
+| `registry_mode` | `full` | Registry operating mode |
+| `storage` | `documentdb` | Storage backend (file, documentdb, mongodb-ce) |
+| `auth` | `keycloak` | Auth provider |
+| `federation` | `true` | Whether federation is enabled |
+| `search_queries_total` | `150` | Lifetime semantic search query count |
+| `search_queries_24h` | `12` | Search queries in the last 24 hours |
+| `search_queries_1h` | `3` | Search queries in the last hour |
+| `ts` | `2026-03-18T00:00:00Z` | ISO 8601 timestamp |
 
 ### Tier 2: Daily Heartbeat (Opt-In, Default OFF)
 
-Sent daily when explicitly enabled:
+Sent daily when explicitly enabled. Includes all Tier 1 fields plus:
 
-- **Version**: Registry version
-- **Server Count**: Number of registered MCP servers
-- **Agent Count**: Number of registered A2A agents
-- **Skill Count**: Number of registered skills
-- **Peer Count**: Number of federation peers
-- **Search Backend**: faiss or documentdb
-- **Embeddings Provider**: sentence-transformers, litellm, or bedrock
-- **Uptime**: Hours since server started
-- **Timestamp**: Event timestamp
+| Field | Example | Description |
+|-------|---------|-------------|
+| `servers_count` | `15` | Number of registered MCP servers |
+| `agents_count` | `8` | Number of registered A2A agents |
+| `skills_count` | `23` | Number of registered skills |
+| `peers_count` | `2` | Number of federation peers |
+| `search_backend` | `documentdb` | Search backend (faiss or documentdb) |
+| `embeddings_provider` | `sentence-transformers` | Embeddings provider |
+| `uptime_hours` | `48` | Hours since server started |
+
+## Request Signing (HMAC)
+
+All telemetry requests are signed with HMAC-SHA256 to prevent unauthorized use of the collector endpoint. The registry computes a signature over the JSON request body and sends it in the `X-Telemetry-Signature` HTTP header. The server-side Lambda collector verifies this signature before processing any event.
+
+This is not a secret-based authentication mechanism -- the signing key is embedded in the open-source code. Its purpose is to raise the bar against casual abuse (e.g., random `curl` requests to the endpoint). Combined with IP-based rate limiting and strict Pydantic schema validation, this makes endpoint abuse impractical.
+
+### Example HTTP Request
+
+A startup event request looks like this:
+
+```http
+POST /v1/collect HTTP/1.1
+Host: m3ijrhd020.execute-api.us-east-1.amazonaws.com
+Content-Type: application/json
+X-Telemetry-Signature: 8a3f2b...c9d1e0
+
+{"arch":"x86_64","auth":"keycloak","cloud":"aws","compute":"ecs","event":"startup","federation":true,"mode":"with-gateway","os":"linux","py":"3.12","registry_id":"c546a650-8af9-4721-9efb-7df221b2a0d9","registry_mode":"full","schema_version":"1","search_queries_1h":3,"search_queries_24h":12,"search_queries_total":150,"storage":"documentdb","ts":"2026-03-18T00:00:00+00:00","v":"1.0.16"}
+```
+
+A heartbeat event request:
+
+```http
+POST /v1/collect HTTP/1.1
+Host: m3ijrhd020.execute-api.us-east-1.amazonaws.com
+Content-Type: application/json
+X-Telemetry-Signature: 5b7e1a...d4f2c3
+
+{"agents_count":8,"cloud":"aws","compute":"ecs","embeddings_provider":"sentence-transformers","event":"heartbeat","peers_count":2,"registry_id":"c546a650-8af9-4721-9efb-7df221b2a0d9","schema_version":"1","search_backend":"documentdb","search_queries_1h":3,"search_queries_24h":12,"search_queries_total":150,"servers_count":15,"skills_count":23,"ts":"2026-03-18T12:00:00+00:00","uptime_hours":48,"v":"1.0.16"}
+```
+
+Notes:
+- JSON body keys are sorted alphabetically (`sort_keys=True`) and compact (`separators=(",",":")`) for deterministic HMAC computation
+- The `X-Telemetry-Signature` header is the HMAC-SHA256 hex digest of the raw JSON body
+
+## Force Telemetry (Admin API)
+
+Admins can trigger telemetry events on demand (bypasses the distributed lock):
+
+```bash
+# Force heartbeat
+uv run python api/registry_management.py --registry-url http://localhost --token-file .token-local telemetry-heartbeat
+
+# Force startup ping
+uv run python api/registry_management.py --registry-url http://localhost --token-file .token-local telemetry-startup
+```
+
+API endpoints (require admin auth):
+- `POST /api/registry-management/telemetry/heartbeat`
+- `POST /api/registry-management/telemetry/startup`
 
 ## What is NOT Collected
 
@@ -44,6 +102,20 @@ We never collect any personally identifiable information (PII):
 - ❌ User data, credentials, tokens
 - ❌ Query content, agent card content, skill code
 - ❌ Any data that could identify a person or organization
+
+## Startup Banner
+
+When telemetry is enabled (the default), you will see this banner at startup:
+
+```
+==============================================================================
+[telemetry] Anonymous usage telemetry is ON
+[telemetry] No PII is collected (no IPs, hostnames, or user data)
+[telemetry] Endpoint: https://m3ijrhd020.execute-api.us-east-1.amazonaws.com/v1/collect
+[telemetry] To disable: set MCP_TELEMETRY_DISABLED=1
+[telemetry] Details: https://github.com/agentic-community/mcp-gateway-registry/blob/main/docs/TELEMETRY.md
+==============================================================================
+```
 
 ## How to Opt-Out
 
@@ -177,30 +249,85 @@ See `terraform/telemetry-collector/README.md` for detailed cost breakdown.
 
 ### Security Features
 
-- ✅ **No IP Logging**: Source IPs are hashed (SHA-256) for rate limiting only
-- ✅ **VPC Isolated**: DocumentDB not accessible from internet
-- ✅ **TLS Everywhere**: All connections encrypted
-- ✅ **Always Returns 204**: No information leakage
-- ✅ **IAM Least Privilege**: Minimal Lambda permissions
+- **No IP Logging**: Source IPs are hashed (SHA-256) for rate limiting only
+- **HMAC Signed**: Requests signed with HMAC-SHA256 to reject unauthorized callers
+- **Rate Limited**: DynamoDB-based per-IP rate limiting (10 requests/minute)
+- **Schema Validated**: Strict Pydantic validation rejects malformed payloads
+- **VPC Isolated**: DocumentDB not accessible from internet
+- **TLS Everywhere**: All connections encrypted
+- **Always Returns 204**: No information leakage (same response for valid, invalid, or rejected)
+- **IAM Least Privilege**: Minimal Lambda permissions
 
-### Querying Your Data
+### Bastion Host Scripts
 
-Connect to DocumentDB to analyze telemetry:
+The bastion host provides scripts for querying and managing telemetry data in DocumentDB. Scripts are located in `terraform/telemetry-collector/bastion-scripts/` and should be copied to the bastion home directory.
+
+#### Interactive Shell (connect.sh)
+
+Open an interactive mongosh session against DocumentDB:
 
 ```bash
-# Get DocumentDB endpoint
-DOCDB_ENDPOINT=$(terraform output -raw documentdb_endpoint)
+~/connect.sh
+```
 
-# Get credentials
-aws secretsmanager get-secret-value --secret-id telemetry-collector-docdb
+#### Quick Summary (query.sh)
 
-# Connect with mongosh
-mongosh --host $DOCDB_ENDPOINT --username telemetry_admin --tls --tlsCAFile global-bundle.pem
+Print a summary of telemetry collections (counts, last 5 events, storage backend breakdown):
 
-# Query telemetry
-use telemetry;
-db.startup_events.find({"v": "1.0.16"}).count();
-db.heartbeat_events.find({"search_backend": "documentdb"});
+```bash
+~/query.sh
+```
+
+#### Export to CSV (telemetry_db.py export)
+
+Dump telemetry data to a CSV file:
+
+```bash
+# Export all collections to registry_metrics.csv
+python3 ~/telemetry_db.py export
+
+# Export to a custom path
+python3 ~/telemetry_db.py export --output /tmp/metrics.csv
+
+# Export only startup events
+python3 ~/telemetry_db.py export --collection startup_events
+
+# Export only heartbeat events
+python3 ~/telemetry_db.py export --collection heartbeat_events
+```
+
+#### Purge Data (telemetry_db.py purge)
+
+Delete all telemetry data from DocumentDB (with interactive confirmation):
+
+```bash
+# Purge all collections (prompts for confirmation)
+python3 ~/telemetry_db.py purge
+
+# Purge only startup events
+python3 ~/telemetry_db.py purge --collection startup_events
+
+# Purge only heartbeat events
+python3 ~/telemetry_db.py purge --collection heartbeat_events
+
+# Skip confirmation prompt
+python3 ~/telemetry_db.py purge --confirm
+```
+
+#### Deploying Scripts to Bastion
+
+Copy scripts to the bastion host after initial setup:
+
+```bash
+BASTION_IP=$(terraform output -raw bastion_public_ip)
+
+scp -i ~/.ssh/id_ed25519 \
+    bastion-scripts/connect.sh \
+    bastion-scripts/query.sh \
+    bastion-scripts/telemetry_db.py \
+    ec2-user@$BASTION_IP:~/
+
+ssh -i ~/.ssh/id_ed25519 ec2-user@$BASTION_IP 'chmod +x ~/connect.sh ~/query.sh'
 ```
 
 ### Full Documentation
@@ -216,6 +343,5 @@ See `terraform/telemetry-collector/README.md` for:
 
 For more information or questions about telemetry:
 
-- **Privacy Policy**: https://mcpgateway.io/privacy
-- **GitHub Issue**: https://github.com/agentic-community/mcp-gateway-registry/issues/557
-- **Documentation**: https://mcpgateway.io/telemetry
+- **GitHub Issue**: https://github.com/agentic-community/mcp-gateway-registry/issues/558
+- **Telemetry Source Code**: https://github.com/agentic-community/mcp-gateway-registry/blob/main/registry/core/telemetry.py
