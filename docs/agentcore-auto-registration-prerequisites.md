@@ -299,7 +299,7 @@ Before running `python -m cli.agentcore sync`, verify:
 - [ ] For `CUSTOM_JWT` gateways: OAuth2 M2M client is created and `OAUTH_DOMAIN` is set
 - [ ] For `AWS_IAM` gateways: AWS credentials are available in the environment
 - [ ] The MCP Gateway Registry is running and accessible at the configured `REGISTRY_URL`
-- [ ] A valid registry auth token exists at the configured `--token-file` path
+- [ ] A valid registry auth token exists at the configured `--token-file` path (default: `.oauth-tokens/ingress.json`). Generate it with: `python credentials-provider/oauth/ingress_oauth.py`
 - [ ] For cross-account scanning: `AgentCoreSyncRole` (or custom role) exists in each target account
 - [ ] For cross-account scanning: The caller has `sts:AssumeRole` permission for each target role
 

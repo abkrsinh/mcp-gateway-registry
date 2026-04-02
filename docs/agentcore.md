@@ -511,10 +511,14 @@ The AgentCore auto-registration CLI automates the discovery and registration of 
 ### Quick Start
 
 ```bash
-# Discover resources without registering (preview)
+# Step 1: Generate the registry ingress token (.oauth-tokens/ingress.json)
+# This is required before running sync — it authenticates with the MCP Gateway Registry.
+python credentials-provider/oauth/ingress_oauth.py
+
+# Step 2: Discover resources without registering (preview)
 python -m cli.agentcore sync --dry-run
 
-# Register all gateways and runtimes
+# Step 3: Register all gateways and runtimes
 python -m cli.agentcore sync
 
 # List discovered resources
@@ -656,7 +660,13 @@ The resource is already registered in the registry. Use `--overwrite` to update 
 
 #### Token file not found
 
-The registry auth token file (default: `.oauth-tokens/ingress.json`) does not exist. Generate it using your ingress credential provider (e.g., `./credentials-provider/generate_creds.sh`).
+The registry auth token file (default: `.oauth-tokens/ingress.json`) does not exist. This file is created by the ingress OAuth script. Generate it with:
+
+```bash
+python credentials-provider/oauth/ingress_oauth.py
+```
+
+This script auto-detects your `AUTH_PROVIDER` (Keycloak, Cognito, or Entra ID) and creates `ingress.json` using the client credentials flow. Once created, `token_refresher.py` will keep it refreshed automatically.
 
 #### Dry-run shows resources but sync registers nothing
 

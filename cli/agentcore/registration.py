@@ -49,6 +49,43 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Helper — generate Cognito token for gateway credential
+# ---------------------------------------------------------------------------
+
+
+def _generate_cognito_token(
+    client_id: str,
+    client_secret: str,
+    oauth_domain: str,
+) -> str | None:
+    """Generate a Cognito M2M token for storing as auth_credential.
+
+    Tries client_credentials grant without explicit scope first.
+    Returns the access_token string, or None on failure.
+    """
+    url = f"{oauth_domain.rstrip('/')}/oauth2/token"
+    try:
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        if token:
+            return token
+        logger.warning("Cognito token response missing access_token")
+    except Exception as e:
+        logger.debug(f"Cognito token generation failed: {e}")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Retry decorator for registry calls
 # ---------------------------------------------------------------------------
 
@@ -272,6 +309,14 @@ class RegistrationBuilder:
             # MCP Servers use "internal" but A2A Agents use "public" as the default,
             # so we map "internal" -> "public" for Agent registrations.
             visibility="public" if self.visibility == "internal" else self.visibility,
+            security_schemes={
+                "sigv4": {
+                    "type": "http",
+                    "scheme": "AWS4-HMAC-SHA256",
+                    "description": "AWS SigV4 request signing (IAM auth)",
+                }
+            },
+            security=[{"sigv4": []}],
             metadata={
                 "source": "agentcore-sync",
                 "runtime_arn": runtime.get("agentRuntimeArn"),
@@ -459,6 +504,24 @@ class SyncOrchestrator:
 
         registration = self.builder.build_gateway_registration(gateway)
         registration.overwrite = self.overwrite
+
+        # For CUSTOM_JWT gateways, generate a token and attach as auth_credential
+        # so the registry can use it for health checks and security scans.
+        if authorizer_type == "CUSTOM_JWT":
+            creds = self.credentials.get_credentials(
+                gateway_arn, authorizer_type="CUSTOM_JWT"
+            )
+            if creds and creds.get("client_id") and creds.get("client_secret"):
+                oauth_domain = os.environ.get("OAUTH_DOMAIN", "")
+                if oauth_domain:
+                    token = _generate_cognito_token(
+                        creds["client_id"], creds["client_secret"], oauth_domain
+                    )
+                    if token:
+                        registration.auth_credential = token
+                        logger.info(
+                            f"Attached egress token as auth_credential for {gateway_name}"
+                        )
 
         result: dict[str, Any] = {
             "resource_type": "gateway",
