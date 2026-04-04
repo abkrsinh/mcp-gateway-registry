@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_REGISTRY_URL = "http://localhost"
-DEFAULT_TOKEN_FILE = ".oauth-tokens/ingress.json"
+DEFAULT_TOKEN_FILE = ".token"
 DEFAULT_REGION = "us-east-1"
 DEFAULT_TIMEOUT = 30
+DEFAULT_MANIFEST_PATH = "token_refresh_manifest.json"
 READY_STATUS = "READY"
 
 
@@ -127,6 +128,32 @@ def _slugify(name: str) -> str:
     return slug
 
 
+_UPPERCASE_WORDS: set[str] = {
+    "mcp", "a2a", "sre", "api", "http", "https", "aws", "iam",
+    "jwt", "oidc", "sso", "idp", "llm", "ai", "ml",
+}
+
+
+def _display_name(name: str) -> str:
+    """Convert a slug or underscore-separated name to a human-readable title.
+
+    Preserves common acronyms in uppercase (MCP, A2A, SRE, API, etc.).
+
+    Examples:
+        geo-mcp -> Geo MCP
+        weather_time_observability_gateway -> Weather Time Observability Gateway
+        my-custom-sre-agent -> My Custom SRE Agent
+    """
+    words = name.replace("-", " ").replace("_", " ").split()
+    result = []
+    for word in words:
+        if word.lower() in _UPPERCASE_WORDS:
+            result.append(word.upper())
+        else:
+            result.append(word.capitalize())
+    return " ".join(result)
+
+
 def _validate_https_url(url: str, resource_name: str) -> bool:
     """Validate that URL uses HTTPS protocol.
 
@@ -180,7 +207,10 @@ def _get_auth_scheme(authorizer_type: str) -> str:
 def _load_token(token_file: str) -> str:
     """Load JWT token from a JSON file.
 
-    Reads the ``access_token`` or ``token`` field from the file.
+    Supports two formats:
+    - Flat: ``{"access_token": "..."}`` or ``{"token": "..."}``
+    - Nested: ``{"tokens": {"access_token": "..."}}``
+
     Raises FileNotFoundError, ValueError on missing file, bad JSON,
     or missing token field.
     """
@@ -188,7 +218,12 @@ def _load_token(token_file: str) -> str:
     try:
         with open(abs_path) as f:
             data = json.load(f)
+            # Try top-level first, then nested under "tokens"
             token = data.get("access_token") or data.get("token")
+            if not token:
+                tokens_obj = data.get("tokens", {})
+                if isinstance(tokens_obj, dict):
+                    token = tokens_obj.get("access_token") or tokens_obj.get("token")
             if not token:
                 raise ValueError(
                     f"No access_token or token field in token file: {abs_path}"

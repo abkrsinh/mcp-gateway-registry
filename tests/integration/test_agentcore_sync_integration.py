@@ -1,10 +1,8 @@
 """Integration tests for AgentCore auto-registration sync flow.
 
 Tests the SyncOrchestrator end-to-end with mocked external dependencies
-(boto3 AWS calls and registry HTTP calls). Validates discovery → registration
-→ credential save → token generation pipeline.
-
-Traces to: Requirements 1-16
+(boto3 AWS calls and registry HTTP calls). Validates discovery -> registration
+-> manifest generation pipeline.
 """
 
 from __future__ import annotations
@@ -30,6 +28,12 @@ GATEWAY_CUSTOM_JWT = {
     "description": "OAuth2 gateway",
     "status": "READY",
     "authorizerType": "CUSTOM_JWT",
+    "authorizerConfiguration": {
+        "customJWTAuthorizer": {
+            "discoveryUrl": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pnikLWYzO/.well-known/openid-configuration",
+            "allowedClients": ["7kqi2l0n47mnfmhfapsf29ch4h"],
+        }
+    },
     "targets": [],
 }
 
@@ -98,7 +102,7 @@ def _mock_agentcore_client(gateways=None, runtimes=None):
         gw_items.append({"gatewayId": gw["gatewayId"], "status": gw["status"]})
     client.list_gateways.return_value = {"items": gw_items}
 
-    # get_gateway — return the full gateway dict for each ID
+    # get_gateway -- return the full gateway dict for each ID
     def _get_gateway(gatewayIdentifier):
         for gw in (gateways or []):
             if gw["gatewayId"] == gatewayIdentifier:
@@ -107,7 +111,7 @@ def _mock_agentcore_client(gateways=None, runtimes=None):
 
     client.get_gateway.side_effect = _get_gateway
 
-    # list_gateway_targets — return empty by default
+    # list_gateway_targets -- return empty by default
     client.list_gateway_targets.return_value = {"items": []}
     client.get_gateway_target.return_value = {}
 
@@ -138,10 +142,8 @@ def _build_orchestrator(
     dry_run=False,
     overwrite=False,
     include_mcp_targets=False,
-    skip_token_generation=False,
-    cred_helper=None,
-    token_manager=None,
     registry_client=None,
+    manifest_path="/tmp/test_manifest.json",
 ):
     """Build a SyncOrchestrator with mocked AWS and registry dependencies."""
     mock_ac_client = _mock_agentcore_client(gateways=gateways, runtimes=runtimes)
@@ -163,7 +165,6 @@ def _build_orchestrator(
         from cli.agentcore.registration import RegistrationBuilder, SyncOrchestrator
 
         scanner = AgentCoreScanner(region=REGION)
-        # Replace the client with our mock (the constructor already called boto3.client)
         scanner.client = mock_ac_client
 
         builder = RegistrationBuilder(region=REGION)
@@ -171,61 +172,31 @@ def _build_orchestrator(
     if registry_client is None:
         registry_client = MagicMock()
 
-    if cred_helper is None:
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = None
-
-    if token_manager is None:
-        token_manager = MagicMock()
-        token_manager.generate_tokens_for_gateways.return_value = {}
-
     orch = SyncOrchestrator(
         scanner=scanner,
         builder=builder,
         registry_client=registry_client,
-        credential_helper=cred_helper,
-        token_manager=token_manager,
         dry_run=dry_run,
         overwrite=overwrite,
         include_mcp_targets=include_mcp_targets,
-        skip_token_generation=skip_token_generation,
+        manifest_path=manifest_path,
     )
-    return orch, registry_client, cred_helper, token_manager
+    return orch, registry_client
 
 
 # ---------------------------------------------------------------------------
-# 8.2 — End-to-end flow: discovery → registration → credential save → token gen
-# Traces to: Req 1-4, 11-13
+# End-to-end flow: discovery -> registration -> manifest
 # ---------------------------------------------------------------------------
 
 
 class TestEndToEndFlow:
-    """Full sync pipeline with CUSTOM_JWT gateway, MCP runtime, and HTTP runtime."""
+    """Full sync pipeline with gateways and runtimes."""
 
-    def test_gateway_discovery_registration_credentials_tokens(self):
-        """CUSTOM_JWT gateway: register → persist creds → generate token."""
-        cred_helper = MagicMock()
-        # Return fresh credentials (no index → needs persistence)
-        cred_helper.get_credentials.return_value = {
-            "client_id": "test-id",
-            "client_secret": "test-secret",
-        }
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.return_value = 1  # assigned index
-
-        token_mgr = MagicMock()
-        token_mgr.generate_tokens_for_gateways.return_value = {
-            GATEWAY_CUSTOM_JWT["gatewayArn"]: ".oauth-tokens/bedrock-agentcore-jwt-gateway-egress.json"
-        }
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT],
-            cred_helper=cred_helper,
-            token_manager=token_mgr,
-        )
+    def test_gateway_discovery_registration_manifest(self):
+        """CUSTOM_JWT gateway: register and collect manifest entry with OIDC metadata."""
+        orch, registry = _build_orchestrator(gateways=[GATEWAY_CUSTOM_JWT])
 
         orch.sync_gateways()
-        orch.generate_tokens()
 
         # Gateway registered
         assert len(orch.results) == 1
@@ -233,17 +204,17 @@ class TestEndToEndFlow:
         assert orch.results[0]["resource_type"] == "gateway"
         registry.register_service.assert_called_once()
 
-        # Credentials persisted
-        cred_helper.persist_credentials.assert_called_once()
-        assert orch._credentials_saved == 1
-
-        # Token generation triggered
-        token_mgr.generate_tokens_for_gateways.assert_called_once()
-        assert orch._tokens_generated == 1
+        # Manifest entry collected
+        assert len(orch._manifest_entries) == 1
+        entry = orch._manifest_entries[0]
+        assert entry["server_path"] == "/jwt-gateway"
+        assert "cognito-idp" in entry["discovery_url"]
+        assert entry["allowed_clients"] == ["7kqi2l0n47mnfmhfapsf29ch4h"]
+        assert entry["idp_vendor"] == "cognito"
 
     def test_mcp_runtime_registered_as_server(self):
-        """MCP runtime → registered as MCP Server via register_service."""
-        orch, registry, _, _ = _build_orchestrator(runtimes=[MCP_RUNTIME])
+        """MCP runtime -> registered as MCP Server via register_service."""
+        orch, registry = _build_orchestrator(runtimes=[MCP_RUNTIME])
 
         orch.sync_runtimes()
 
@@ -255,8 +226,8 @@ class TestEndToEndFlow:
         registry.register_agent.assert_not_called()
 
     def test_http_runtime_registered_as_agent(self):
-        """HTTP runtime → registered as A2A Agent via register_agent."""
-        orch, registry, _, _ = _build_orchestrator(runtimes=[HTTP_RUNTIME])
+        """HTTP runtime -> registered as A2A Agent via register_agent."""
+        orch, registry = _build_orchestrator(runtimes=[HTTP_RUNTIME])
 
         orch.sync_runtimes()
 
@@ -268,13 +239,9 @@ class TestEndToEndFlow:
 
     def test_full_sync_gateways_and_runtimes(self):
         """Sync both gateways and runtimes in a single run."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = None  # skip creds
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[{**GATEWAY_NONE}],
+        orch, registry = _build_orchestrator(
+            gateways=[GATEWAY_NONE],
             runtimes=[MCP_RUNTIME, HTTP_RUNTIME],
-            cred_helper=cred_helper,
         )
 
         orch.sync_gateways()
@@ -288,50 +255,17 @@ class TestEndToEndFlow:
         # 1 HTTP runtime = 1 register_agent call
         assert registry.register_agent.call_count == 1
 
-    def test_credentials_loaded_from_env_skip_persistence(self):
-        """Credentials already in env (have index) → no persist, still queue token gen."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = {
-            "client_id": "env-id",
-            "client_secret": "env-secret",
-            "index": "3",
-            "server_name": "jwt-gateway",
-        }
-
-        token_mgr = MagicMock()
-        token_mgr.generate_tokens_for_gateways.return_value = {
-            GATEWAY_CUSTOM_JWT["gatewayArn"]: "token-path"
-        }
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT],
-            cred_helper=cred_helper,
-            token_manager=token_mgr,
-        )
-
-        orch.sync_gateways()
-        orch.generate_tokens()
-
-        # No persistence needed
-        cred_helper.persist_credentials.assert_not_called()
-        assert orch._credentials_saved == 0
-
-        # Token gen still queued
-        assert orch._arn_to_index[GATEWAY_CUSTOM_JWT["gatewayArn"]] == 3
-        token_mgr.generate_tokens_for_gateways.assert_called_once()
-
 
 # ---------------------------------------------------------------------------
-# 8.3 — Dry-run mode
-# Traces to: Req 6
+# Dry-run mode
 # ---------------------------------------------------------------------------
 
 
 class TestDryRunMode:
-    """Dry-run: no registry calls, no credential persistence, no token generation."""
+    """Dry-run: no registry calls, manifest entries collected but not written."""
 
     def test_dry_run_skips_registry_calls(self):
-        orch, registry, cred_helper, token_mgr = _build_orchestrator(
+        orch, registry = _build_orchestrator(
             gateways=[GATEWAY_CUSTOM_JWT, GATEWAY_NONE],
             runtimes=[MCP_RUNTIME, HTTP_RUNTIME],
             dry_run=True,
@@ -339,134 +273,44 @@ class TestDryRunMode:
 
         orch.sync_gateways()
         orch.sync_runtimes()
-        orch.generate_tokens()
 
         # No registry calls
         registry.register_service.assert_not_called()
         registry.register_agent.assert_not_called()
 
-        # No credential persistence
-        cred_helper.persist_credentials.assert_not_called()
-
-        # No token generation
-        token_mgr.generate_tokens_for_gateways.assert_not_called()
-
         # All results are dry_run
         assert len(orch.results) == 4
         assert all(r["status"] == "dry_run" for r in orch.results)
 
-    def test_dry_run_no_credentials_saved(self):
-        orch, _, cred_helper, _ = _build_orchestrator(
+    def test_dry_run_collects_manifest_entries(self):
+        """Dry-run still collects manifest entries for CUSTOM_JWT gateways."""
+        orch, _ = _build_orchestrator(
             gateways=[GATEWAY_CUSTOM_JWT],
             dry_run=True,
         )
 
         orch.sync_gateways()
 
-        assert orch._credentials_saved == 0
-        cred_helper.get_credentials.assert_not_called()
+        assert len(orch._manifest_entries) == 1
+        assert orch._manifest_entries[0]["idp_vendor"] == "cognito"
 
-    def test_dry_run_tokens_generated_is_zero(self):
-        orch, _, _, _ = _build_orchestrator(
+    def test_dry_run_does_not_write_manifest(self, tmp_path):
+        """Dry-run mode does not create the manifest file."""
+        manifest_file = tmp_path / "manifest.json"
+        orch, _ = _build_orchestrator(
             gateways=[GATEWAY_CUSTOM_JWT],
             dry_run=True,
+            manifest_path=str(manifest_file),
         )
 
         orch.sync_gateways()
-        orch.generate_tokens()
+        orch.write_manifest()
 
-        assert orch._tokens_generated == 0
+        assert not manifest_file.exists()
 
 
 # ---------------------------------------------------------------------------
-# 8.4 — Rollback on errors
-# Traces to: Req 14.6
-# ---------------------------------------------------------------------------
-
-
-class TestRollbackOnErrors:
-    """Registration reverted if credential save fails."""
-
-    def test_credential_persist_failure_marks_result_failed(self):
-        """If .env write fails after successful registration, result → failed."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = {
-            "client_id": "id",
-            "client_secret": "secret",
-        }
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.side_effect = OSError("Permission denied")
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT],
-            cred_helper=cred_helper,
-        )
-
-        orch.sync_gateways()
-
-        # Registration was called
-        registry.register_service.assert_called_once()
-
-        # But result is marked as failed due to credential save failure
-        assert len(orch.results) == 1
-        assert orch.results[0]["status"] == "failed"
-        assert "credential save failed" in orch.results[0]["message"].lower()
-
-    def test_rollback_does_not_affect_other_gateways(self):
-        """One gateway's credential failure doesn't affect another gateway."""
-        cred_helper = MagicMock()
-
-        # First gateway: cred persist fails; second gateway: NONE auth (no creds)
-        cred_helper.get_credentials.side_effect = [
-            {"client_id": "id", "client_secret": "secret"},
-            None,  # NONE gateway returns None
-        ]
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.side_effect = OSError("disk full")
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT, GATEWAY_NONE],
-            cred_helper=cred_helper,
-        )
-
-        orch.sync_gateways()
-
-        assert len(orch.results) == 2
-        # First gateway: failed (rollback)
-        assert orch.results[0]["status"] == "failed"
-        # Second gateway: registered successfully
-        assert orch.results[1]["status"] == "registered"
-
-    def test_no_tokens_generated_after_credential_failure(self):
-        """Token generation is not queued when credential persistence fails."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = {
-            "client_id": "id",
-            "client_secret": "secret",
-        }
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.side_effect = OSError("write error")
-
-        token_mgr = MagicMock()
-        token_mgr.generate_tokens_for_gateways.return_value = {}
-
-        orch, _, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT],
-            cred_helper=cred_helper,
-            token_manager=token_mgr,
-        )
-
-        orch.sync_gateways()
-        orch.generate_tokens()
-
-        # No gateway configs queued for token gen
-        assert len(orch._gateway_configs) == 0
-        assert orch._tokens_generated == 0
-
-
-# ---------------------------------------------------------------------------
-# 8.5 — Mixed deployment: CUSTOM_JWT, IAM, NONE gateways in single sync
-# Traces to: Req 11.5, 11.6, 11.7
+# Mixed deployment: CUSTOM_JWT, IAM, NONE gateways
 # ---------------------------------------------------------------------------
 
 
@@ -475,109 +319,33 @@ class TestMixedDeployment:
 
     def test_mixed_gateways_all_registered(self):
         """All three authorizer types register successfully."""
-        cred_helper = MagicMock()
-
-        def _get_creds(arn, authorizer_type="CUSTOM_JWT", interactive=True):
-            if authorizer_type == "CUSTOM_JWT":
-                return {"client_id": "id", "client_secret": "secret"}
-            if authorizer_type == "AWS_IAM":
-                return {"type": "iam", "authorizer_type": "AWS_IAM"}
-            if authorizer_type == "NONE":
-                return {"type": "none", "authorizer_type": "NONE"}
-            return None
-
-        cred_helper.get_credentials.side_effect = _get_creds
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.return_value = 1
-
-        token_mgr = MagicMock()
-        token_mgr.generate_tokens_for_gateways.return_value = {
-            GATEWAY_CUSTOM_JWT["gatewayArn"]: "token-path"
-        }
-
-        orch, registry, _, _ = _build_orchestrator(
+        orch, registry = _build_orchestrator(
             gateways=[GATEWAY_CUSTOM_JWT, GATEWAY_IAM, GATEWAY_NONE],
-            cred_helper=cred_helper,
-            token_manager=token_mgr,
         )
 
         orch.sync_gateways()
-        orch.generate_tokens()
 
         # All 3 gateways registered
         assert len(orch.results) == 3
         assert all(r["status"] == "registered" for r in orch.results)
         assert registry.register_service.call_count == 3
 
-    def test_only_custom_jwt_triggers_credential_persistence(self):
-        """Only CUSTOM_JWT gateways persist credentials; IAM and NONE do not."""
-        cred_helper = MagicMock()
-
-        def _get_creds(arn, authorizer_type="CUSTOM_JWT", interactive=True):
-            if authorizer_type == "CUSTOM_JWT":
-                return {"client_id": "id", "client_secret": "secret"}
-            if authorizer_type == "AWS_IAM":
-                return {"type": "iam", "authorizer_type": "AWS_IAM"}
-            return {"type": "none", "authorizer_type": "NONE"}
-
-        cred_helper.get_credentials.side_effect = _get_creds
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.return_value = 1
-
-        orch, _, _, _ = _build_orchestrator(
+    def test_only_custom_jwt_collects_manifest(self):
+        """Only CUSTOM_JWT gateways produce manifest entries."""
+        orch, _ = _build_orchestrator(
             gateways=[GATEWAY_CUSTOM_JWT, GATEWAY_IAM, GATEWAY_NONE],
-            cred_helper=cred_helper,
         )
 
         orch.sync_gateways()
 
-        # Only the CUSTOM_JWT gateway triggers persist
-        cred_helper.persist_credentials.assert_called_once()
-        assert orch._credentials_saved == 1
-
-    def test_only_custom_jwt_triggers_token_generation(self):
-        """Token generation only for CUSTOM_JWT gateways."""
-        cred_helper = MagicMock()
-
-        def _get_creds(arn, authorizer_type="CUSTOM_JWT", interactive=True):
-            if authorizer_type == "CUSTOM_JWT":
-                return {"client_id": "id", "client_secret": "secret"}
-            if authorizer_type == "AWS_IAM":
-                return {"type": "iam", "authorizer_type": "AWS_IAM"}
-            return {"type": "none", "authorizer_type": "NONE"}
-
-        cred_helper.get_credentials.side_effect = _get_creds
-        cred_helper.validate_credentials.return_value = True
-        cred_helper.persist_credentials.return_value = 5
-
-        token_mgr = MagicMock()
-        token_mgr.generate_tokens_for_gateways.return_value = {
-            GATEWAY_CUSTOM_JWT["gatewayArn"]: "token-path"
-        }
-
-        orch, _, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_CUSTOM_JWT, GATEWAY_IAM, GATEWAY_NONE],
-            cred_helper=cred_helper,
-            token_manager=token_mgr,
-        )
-
-        orch.sync_gateways()
-        orch.generate_tokens()
-
-        # Only 1 gateway config queued (CUSTOM_JWT)
-        assert len(orch._gateway_configs) == 1
-        assert orch._gateway_configs[0]["gateway_arn"] == GATEWAY_CUSTOM_JWT["gatewayArn"]
-        token_mgr.generate_tokens_for_gateways.assert_called_once()
+        assert len(orch._manifest_entries) == 1
+        assert orch._manifest_entries[0]["gateway_arn"] == GATEWAY_CUSTOM_JWT["gatewayArn"]
 
     def test_mixed_with_runtimes(self):
         """Mixed gateways + mixed runtimes in a single sync."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = None  # skip creds for simplicity
-
-        orch, registry, _, _ = _build_orchestrator(
+        orch, registry = _build_orchestrator(
             gateways=[GATEWAY_IAM, GATEWAY_NONE],
             runtimes=[MCP_RUNTIME, HTTP_RUNTIME],
-            cred_helper=cred_helper,
         )
 
         orch.sync_gateways()
@@ -594,41 +362,78 @@ class TestMixedDeployment:
 
     def test_iam_gateway_auth_scheme_is_bearer(self):
         """IAM gateways get auth_scheme=bearer in registration."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = {
-            "type": "iam",
-            "authorizer_type": "AWS_IAM",
-        }
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_IAM],
-            cred_helper=cred_helper,
-        )
+        orch, registry = _build_orchestrator(gateways=[GATEWAY_IAM])
 
         orch.sync_gateways()
 
         assert len(orch.results) == 1
         assert orch.results[0]["status"] == "registered"
-        # Verify the registration model passed to register_service
         call_args = registry.register_service.call_args
         reg = call_args[0][0]
         assert reg.auth_scheme == "bearer"
 
     def test_none_gateway_auth_scheme_is_none(self):
         """NONE gateways get auth_scheme=none in registration."""
-        cred_helper = MagicMock()
-        cred_helper.get_credentials.return_value = {
-            "type": "none",
-            "authorizer_type": "NONE",
-        }
-
-        orch, registry, _, _ = _build_orchestrator(
-            gateways=[GATEWAY_NONE],
-            cred_helper=cred_helper,
-        )
+        orch, registry = _build_orchestrator(gateways=[GATEWAY_NONE])
 
         orch.sync_gateways()
 
         call_args = registry.register_service.call_args
         reg = call_args[0][0]
         assert reg.auth_scheme == "none"
+
+
+# ---------------------------------------------------------------------------
+# Manifest file writing
+# ---------------------------------------------------------------------------
+
+
+class TestManifestWriting:
+    """Tests for token refresh manifest file output."""
+
+    def test_manifest_written_with_correct_structure(self, tmp_path):
+        """Manifest file contains correct OIDC metadata for CUSTOM_JWT gateways."""
+        manifest_file = tmp_path / "manifest.json"
+        orch, _ = _build_orchestrator(
+            gateways=[GATEWAY_CUSTOM_JWT],
+            manifest_path=str(manifest_file),
+        )
+
+        orch.sync_gateways()
+        orch.write_manifest()
+
+        data = json.loads(manifest_file.read_text())
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["server_path"] == "/jwt-gateway"
+        assert entry["gateway_arn"] == GATEWAY_CUSTOM_JWT["gatewayArn"]
+        assert "cognito-idp" in entry["discovery_url"]
+        assert entry["allowed_clients"] == ["7kqi2l0n47mnfmhfapsf29ch4h"]
+        assert entry["idp_vendor"] == "cognito"
+
+    def test_no_manifest_for_non_jwt_gateways(self, tmp_path):
+        """IAM and NONE gateways produce no manifest entries."""
+        manifest_file = tmp_path / "manifest.json"
+        orch, _ = _build_orchestrator(
+            gateways=[GATEWAY_IAM, GATEWAY_NONE],
+            manifest_path=str(manifest_file),
+        )
+
+        orch.sync_gateways()
+        orch.write_manifest()
+
+        # No manifest file created (no CUSTOM_JWT gateways)
+        assert not manifest_file.exists()
+
+    def test_runtimes_produce_no_manifest_entries(self, tmp_path):
+        """Runtimes do not contribute to the manifest."""
+        manifest_file = tmp_path / "manifest.json"
+        orch, _ = _build_orchestrator(
+            runtimes=[MCP_RUNTIME, HTTP_RUNTIME],
+            manifest_path=str(manifest_file),
+        )
+
+        orch.sync_runtimes()
+        orch.write_manifest()
+
+        assert not manifest_file.exists()

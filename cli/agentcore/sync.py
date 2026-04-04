@@ -17,6 +17,7 @@ import os
 import sys
 
 from .models import (
+    DEFAULT_MANIFEST_PATH,
     DEFAULT_REGION,
     DEFAULT_REGISTRY_URL,
     DEFAULT_TIMEOUT,
@@ -45,9 +46,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  AWS_REGION                    AWS region (default: us-east-1)\n"
             "  REGISTRY_URL                  Registry base URL\n"
             "  REGISTRY_TOKEN_FILE           Path to registry auth token file\n"
-            "  OAUTH_DOMAIN                  OAuth2 provider domain URL\n"
-            "  AGENTCORE_CLIENT_ID_{N}       OAuth2 client ID for gateway N\n"
-            "  AGENTCORE_CLIENT_SECRET_{N}   OAuth2 client secret for gateway N\n"
             "  AGENTCORE_ACCOUNTS            Comma-separated account IDs (cross-account)\n"
             "  AGENTCORE_ASSUME_ROLE_NAME    Role name to assume (default: AgentCoreSyncRole)\n"
         ),
@@ -152,9 +150,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Register mcpServer gateway targets as separate MCP Servers",
     )
     sync_parser.add_argument(
-        "--skip-token-generation",
-        action="store_true",
-        help="Skip initial egress token generation after registration",
+        "--manifest",
+        default=DEFAULT_MANIFEST_PATH,
+        help="Output path for token refresh manifest (default: token_refresh_manifest.json)",
     )
 
     # -- list subcommand ---------------------------------------------------
@@ -227,7 +225,7 @@ def _assume_role_session(
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
-    """Execute the sync subcommand: discover, register, persist creds, gen tokens."""
+    """Execute the sync subcommand: discover, register, write manifest."""
     # Load registry token
     try:
         token = _load_token(args.token_file)
@@ -236,10 +234,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 1
 
     # Late imports to keep argparse fast
-    from .credentials import CredentialHelper
     from .discovery import AgentCoreScanner
     from .registration import RegistrationBuilder, SyncOrchestrator
-    from .token_manager import TokenManager
 
     # Add project root so api.registry_client is importable
     sys.path.insert(
@@ -251,11 +247,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
     from api.registry_client import RegistryClient
 
     registry = RegistryClient(registry_url=args.registry_url, token=token)
-    cred_helper = CredentialHelper()
-
-    token_manager = None
-    if not args.skip_token_generation:
-        token_manager = TokenManager()
 
     # Determine accounts to scan
     account_ids = _parse_account_ids(getattr(args, "accounts", ""))
@@ -295,13 +286,11 @@ def cmd_sync(args: argparse.Namespace) -> int:
             scanner=scanner,
             builder=builder,
             registry_client=registry,
-            credential_helper=cred_helper,
-            token_manager=token_manager,
             dry_run=args.dry_run,
             overwrite=args.overwrite,
             include_mcp_targets=args.include_mcp_targets,
-            skip_token_generation=args.skip_token_generation,
             output_format=args.output,
+            manifest_path=args.manifest,
         )
 
         # Scope filtering
@@ -310,8 +299,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if not args.gateways_only:
             orchestrator.sync_runtimes()
 
-        # Post-registration token generation
-        orchestrator.generate_tokens()
+        # Write token refresh manifest
+        orchestrator.write_manifest()
 
         # Summary
         orchestrator.print_summary()
@@ -465,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        format="%(asctime)s,p%(process)s,{%(filename)s:%(lineno)d},%(levelname)s,%(message)s",
     )
 
     logger.debug(f"CLI args: {args}")

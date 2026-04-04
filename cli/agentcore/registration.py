@@ -1,8 +1,8 @@
-"""Registry integration — build registrations and orchestrate sync.
+"""Registry integration -- build registrations and orchestrate sync.
 
 Contains ``RegistrationBuilder`` (maps discovered AWS resources to
 registry models) and ``SyncOrchestrator`` (coordinates scanning,
-registration, credential persistence, and token generation).
+registration, and manifest generation for token refresh).
 """
 
 from __future__ import annotations
@@ -11,29 +11,24 @@ import json
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import boto3
 import requests
 from tenacity import (
     retry,
     retry_if_exception,
-    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
 
 from .models import (
     _build_invocation_url,
+    _display_name,
     _get_auth_scheme,
     _slugify,
     _validate_https_url,
 )
-
-if TYPE_CHECKING:
-    from .credentials import CredentialHelper
-    from .discovery import AgentCoreScanner
-    from .token_manager import TokenManager
 
 # Add parent directory to path for api imports
 sys.path.insert(
@@ -49,57 +44,46 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helper — generate Cognito token for gateway credential
+# Constants
+# ---------------------------------------------------------------------------
+
+IDP_PATTERNS: dict[str, str] = {
+    "cognito-idp": "cognito",
+    "auth0.com": "auth0",
+    "okta.com": "okta",
+    "microsoftonline.com": "entra",
+    "/realms/": "keycloak",
+}
+
+
+# ---------------------------------------------------------------------------
+# Private helper functions
 # ---------------------------------------------------------------------------
 
 
-def _generate_cognito_token(
-    client_id: str,
-    client_secret: str,
-    oauth_domain: str,
-) -> str | None:
-    """Generate a Cognito M2M token for storing as auth_credential.
+def _detect_idp_vendor(discovery_url: str) -> str:
+    """Detect IdP vendor from OIDC discovery URL.
 
-    Tries client_credentials grant without explicit scope first.
-    Returns the access_token string, or None on failure.
+    Scans the URL for known identity-provider patterns and returns
+    a short vendor label (e.g. "cognito", "okta").  Returns "unknown"
+    when no pattern matches.
     """
-    url = f"{oauth_domain.rstrip('/')}/oauth2/token"
-    try:
-        resp = requests.post(
-            url,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        token = resp.json().get("access_token")
-        if token:
-            return token
-        logger.warning("Cognito token response missing access_token")
-    except Exception as e:
-        logger.debug(f"Cognito token generation failed: {e}")
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Retry decorator for registry calls
-# ---------------------------------------------------------------------------
+    for pattern, vendor in IDP_PATTERNS.items():
+        if pattern in discovery_url:
+            return vendor
+    return "unknown"
 
 
 def _retry_registry_call(func):
     """Decorator: retry on ``requests.exceptions.RequestException``.
 
     3 attempts, exponential backoff 1-4 s.
-    Does NOT retry on 409 Conflict (idempotency — resource already exists).
+    Does NOT retry on 409 Conflict (idempotency -- resource already exists).
     """
 
     def _should_retry(exc: BaseException) -> bool:
         if isinstance(exc, requests.exceptions.HTTPError):
-            # Don't retry 409 Conflict — it means the resource already exists
+            # Don't retry 409 Conflict -- it means the resource already exists
             if exc.response is not None and exc.response.status_code == 409:
                 return False
         return isinstance(exc, requests.exceptions.RequestException)
@@ -175,16 +159,42 @@ class RegistrationBuilder:
         self,
         gateway: dict[str, Any],
     ) -> InternalServiceRegistration:
-        """Build MCP Server registration from a gateway."""
-        name = gateway.get("name", gateway["gatewayId"])
-        path = f"/{_slugify(name)}"
+        """Build MCP Server registration from a gateway.
+
+        Includes OIDC metadata (discovery_url, allowed_clients, idp_vendor)
+        when the gateway uses CUSTOM_JWT authorization with a discovery URL.
+        """
+        raw_name = gateway.get("name", gateway["gatewayId"])
+        path = f"/{_slugify(raw_name)}"
+        display = _display_name(raw_name)
         gateway_url = gateway.get("gatewayUrl", "")
         authorizer_type = gateway.get("authorizerType", "NONE")
 
+        metadata: dict[str, Any] = {
+            "source": "agentcore-sync",
+            "gateway_arn": gateway.get("gatewayArn"),
+            "gateway_id": gateway.get("gatewayId"),
+            "authorizer_type": authorizer_type,
+            "region": self.region,
+            "account_id": self.account_id,
+        }
+
+        # Enrich metadata with OIDC details for CUSTOM_JWT gateways
+        if authorizer_type == "CUSTOM_JWT":
+            authorizer_config = gateway.get("authorizerConfiguration", {})
+            jwt_config = authorizer_config.get("customJWTAuthorizer", {})
+            discovery_url = jwt_config.get("discoveryUrl", "")
+            allowed_clients = jwt_config.get("allowedClients", [])
+
+            if discovery_url:
+                metadata["discovery_url"] = discovery_url
+                metadata["allowed_clients"] = allowed_clients
+                metadata["idp_vendor"] = _detect_idp_vendor(discovery_url)
+
         return InternalServiceRegistration(
             path=path,
-            name=name,
-            description=gateway.get("description", f"AgentCore Gateway: {name}"),
+            name=display,
+            description=gateway.get("description", f"AgentCore Gateway: {display}"),
             proxy_pass_url=gateway_url,
             mcp_endpoint=gateway_url,
             auth_provider="bedrock-agentcore",
@@ -192,14 +202,7 @@ class RegistrationBuilder:
             supported_transports=["streamable-http"],
             tags=["agentcore", "gateway", "auto-registered"],
             overwrite=False,
-            metadata={
-                "source": "agentcore-sync",
-                "gateway_arn": gateway.get("gatewayArn"),
-                "gateway_id": gateway.get("gatewayId"),
-                "authorizer_type": authorizer_type,
-                "region": self.region,
-                "account_id": self.account_id,
-            },
+            metadata=metadata,
         )
 
     def build_target_registration(
@@ -228,9 +231,9 @@ class RegistrationBuilder:
 
         return InternalServiceRegistration(
             path=path,
-            name=f"{gateway_name} - {target_name}",
+            name=f"{_display_name(gateway_name)} - {_display_name(target_name)}",
             description=target.get(
-                "description", f"MCP Server target: {target_name}"
+                "description", f"MCP Server target: {_display_name(target_name)}"
             ),
             proxy_pass_url=endpoint,
             mcp_endpoint=endpoint,
@@ -253,17 +256,18 @@ class RegistrationBuilder:
         runtime: dict[str, Any],
     ) -> InternalServiceRegistration:
         """Build MCP Server registration from a runtime with MCP protocol."""
-        name = runtime.get("agentRuntimeName", runtime["agentRuntimeId"])
-        path = f"/{_slugify(name)}"
+        raw_name = runtime.get("agentRuntimeName", runtime["agentRuntimeId"])
+        path = f"/{_slugify(raw_name)}"
+        display = _display_name(raw_name)
         invocation_url = _build_invocation_url(
             self.region, runtime.get("agentRuntimeArn", "")
         )
 
         return InternalServiceRegistration(
             path=path,
-            name=name,
+            name=display,
             description=runtime.get(
-                "description", f"AgentCore MCP Server: {name}"
+                "description", f"AgentCore MCP Server: {display}"
             ),
             proxy_pass_url=invocation_url,
             mcp_endpoint=invocation_url,
@@ -287,8 +291,9 @@ class RegistrationBuilder:
         runtime: dict[str, Any],
     ) -> AgentRegistration:
         """Build A2A Agent registration from a runtime with HTTP/A2A protocol."""
-        name = runtime.get("agentRuntimeName", runtime["agentRuntimeId"])
-        path = f"/{_slugify(name)}"
+        raw_name = runtime.get("agentRuntimeName", runtime["agentRuntimeId"])
+        path = f"/{_slugify(raw_name)}"
+        display = _display_name(raw_name)
         invocation_url = _build_invocation_url(
             self.region, runtime.get("agentRuntimeArn", "")
         )
@@ -296,15 +301,19 @@ class RegistrationBuilder:
             "serverProtocol", "HTTP"
         )
 
+        tags = ["agentcore", "runtime", "agent", "auto-registered"]
+        if protocol == "A2A":
+            tags.append("a2a")
+
         return AgentRegistration(
-            name=name,
+            name=display,
             description=runtime.get(
-                "description", f"AgentCore Agent: {name}"
+                "description", f"AgentCore Agent: {display}"
             ),
             url=invocation_url,
             path=path,
             version="1.0.0",
-            tags=["agentcore", "runtime", "agent", "auto-registered"],
+            tags=tags,
             # Agent validator accepts: public, private, group-restricted (not "internal").
             # MCP Servers use "internal" but A2A Agents use "public" as the default,
             # so we map "internal" -> "public" for Agent registrations.
@@ -334,14 +343,14 @@ class RegistrationBuilder:
 
 
 class SyncOrchestrator:
-    """Orchestrates discovery, registration, credentials, and tokens.
+    """Orchestrates discovery, registration, and manifest generation.
 
     Coordinates the full sync lifecycle:
     1. Scan gateways / runtimes via ``AgentCoreScanner``
     2. Build registrations via ``RegistrationBuilder``
     3. Register with the registry via ``RegistryClient``
-    4. Persist credentials via ``CredentialHelper`` (CUSTOM_JWT only)
-    5. Generate initial tokens via ``TokenManager`` (CUSTOM_JWT only)
+    4. Collect manifest entries for CUSTOM_JWT gateways
+    5. Write a token-refresh manifest file for downstream tooling
 
     Supports dry-run, overwrite, scope filtering, and JSON output.
     """
@@ -351,31 +360,22 @@ class SyncOrchestrator:
         scanner: AgentCoreScanner,
         builder: RegistrationBuilder,
         registry_client: RegistryClient,
-        credential_helper: CredentialHelper,
-        token_manager: TokenManager | None = None,
         dry_run: bool = False,
         overwrite: bool = False,
         include_mcp_targets: bool = False,
-        skip_token_generation: bool = False,
         output_format: str = "text",
+        manifest_path: str = "token_refresh_manifest.json",
     ) -> None:
         self.scanner = scanner
         self.builder = builder
         self.registry = registry_client
-        self.credentials = credential_helper
-        self.token_manager = token_manager
         self.dry_run = dry_run
         self.overwrite = overwrite
         self.include_mcp_targets = include_mcp_targets
-        self.skip_token_generation = skip_token_generation
         self.output_format = output_format
+        self.manifest_path = manifest_path
         self.results: list[dict[str, Any]] = []
-        self._credentials_saved = 0
-        self._tokens_generated = 0
-        # Track ARN→index for token generation
-        self._arn_to_index: dict[str, int] = {}
-        # Track gateway configs for token generation
-        self._gateway_configs: list[dict[str, Any]] = []
+        self._manifest_entries: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -401,28 +401,30 @@ class SyncOrchestrator:
         for runtime in runtimes:
             self._register_runtime(runtime)
 
-    def generate_tokens(self) -> None:
-        """Generate initial egress tokens for CUSTOM_JWT gateways.
+    def write_manifest(self) -> None:
+        """Write the token-refresh manifest for CUSTOM_JWT gateways.
 
-        Called after all registrations are complete. Skipped in
-        dry-run mode or when ``--skip-token-generation`` is set.
+        The manifest is consumed by downstream tooling (e.g. a token
+        refresh cron) to obtain and rotate egress tokens.
         """
-        if self.dry_run or self.skip_token_generation or not self.token_manager:
-            return
-        if not self._gateway_configs:
+        if self.dry_run:
+            logger.info(
+                f"[DRY-RUN] Would write manifest with "
+                f"{len(self._manifest_entries)} entries"
+            )
             return
 
-        try:
-            token_paths = self.token_manager.generate_tokens_for_gateways(
-                self._gateway_configs, self._arn_to_index
-            )
-            self._tokens_generated = len(token_paths)
-            if token_paths:
-                logger.info(
-                    f"Generated {len(token_paths)} initial egress tokens"
-                )
-        except Exception as e:
-            logger.error(f"Token generation failed: {e}")
+        if not self._manifest_entries:
+            logger.info("No CUSTOM_JWT gateways -- skipping manifest")
+            return
+
+        with open(self.manifest_path, "w") as f:
+            json.dump(self._manifest_entries, f, indent=2)
+
+        logger.info(
+            f"Wrote {len(self._manifest_entries)} entries "
+            f"to {self.manifest_path}"
+        )
 
     def print_summary(self) -> None:
         """Print sync summary in text or JSON format."""
@@ -440,8 +442,7 @@ class SyncOrchestrator:
             "registered": registered,
             "skipped": skipped,
             "failed": failed,
-            "credentials_saved": self._credentials_saved,
-            "tokens_generated": self._tokens_generated,
+            "manifest_entries": len(self._manifest_entries),
             "would_register": dry_run_count if self.dry_run else 0,
             "total": len(self.results),
             "results": self.results,
@@ -462,8 +463,7 @@ class SyncOrchestrator:
             print(f"Registered:        {registered}")
             print(f"Skipped:           {skipped}")
             print(f"Failed:            {failed}")
-            print(f"Credentials saved: {self._credentials_saved}")
-            print(f"Tokens generated:  {self._tokens_generated}")
+            print(f"Manifest entries:  {len(self._manifest_entries)}")
 
         print("\nDETAILS:")
         print("-" * 80)
@@ -481,14 +481,48 @@ class SyncOrchestrator:
         print("=" * 80)
 
     # ------------------------------------------------------------------
-    # Internal — gateway registration
+    # Internal -- manifest collection
+    # ------------------------------------------------------------------
+
+    def _collect_manifest_entry(
+        self,
+        gateway: dict[str, Any],
+        server_path: str,
+    ) -> None:
+        """Collect a manifest entry for a CUSTOM_JWT gateway.
+
+        Only gateways with CUSTOM_JWT authorization and a valid
+        discovery URL are included in the manifest.
+        """
+        if gateway.get("authorizerType") != "CUSTOM_JWT":
+            return
+
+        jwt_config = (
+            gateway
+            .get("authorizerConfiguration", {})
+            .get("customJWTAuthorizer", {})
+        )
+        discovery_url = jwt_config.get("discoveryUrl", "")
+        if not discovery_url:
+            return
+
+        self._manifest_entries.append({
+            "server_path": server_path,
+            "gateway_arn": gateway.get("gatewayArn", ""),
+            "discovery_url": discovery_url,
+            "allowed_clients": jwt_config.get("allowedClients", []),
+            "idp_vendor": _detect_idp_vendor(discovery_url),
+        })
+
+    # ------------------------------------------------------------------
+    # Internal -- gateway registration
     # ------------------------------------------------------------------
 
     def _register_gateway(self, gateway: dict[str, Any]) -> None:
+        """Register a single gateway as an MCP Server."""
         gateway_name = gateway.get("name", gateway["gatewayId"])
         gateway_url = gateway.get("gatewayUrl", "")
         gateway_arn = gateway.get("gatewayArn", "")
-        authorizer_type = gateway.get("authorizerType", "NONE")
 
         if not _validate_https_url(gateway_url, gateway_name):
             self.results.append({
@@ -505,24 +539,6 @@ class SyncOrchestrator:
         registration = self.builder.build_gateway_registration(gateway)
         registration.overwrite = self.overwrite
 
-        # For CUSTOM_JWT gateways, generate a token and attach as auth_credential
-        # so the registry can use it for health checks and security scans.
-        if authorizer_type == "CUSTOM_JWT":
-            creds = self.credentials.get_credentials(
-                gateway_arn, authorizer_type="CUSTOM_JWT"
-            )
-            if creds and creds.get("client_id") and creds.get("client_secret"):
-                oauth_domain = os.environ.get("OAUTH_DOMAIN", "")
-                if oauth_domain:
-                    token = _generate_cognito_token(
-                        creds["client_id"], creds["client_secret"], oauth_domain
-                    )
-                    if token:
-                        registration.auth_credential = token
-                        logger.info(
-                            f"Attached egress token as auth_credential for {gateway_name}"
-                        )
-
         result: dict[str, Any] = {
             "resource_type": "gateway",
             "resource_name": gateway_name,
@@ -536,6 +552,7 @@ class SyncOrchestrator:
             result["message"] = "Would register as MCP Server"
             logger.info(f"[DRY-RUN] Would register gateway: {gateway_name}")
             self.results.append(result)
+            self._collect_manifest_entry(gateway, registration.service_path)
             return
 
         try:
@@ -559,73 +576,10 @@ class SyncOrchestrator:
             return
 
         self.results.append(result)
-
-        # Post-registration: credential persistence + token setup
-        if authorizer_type == "CUSTOM_JWT":
-            self._handle_gateway_credentials(gateway, gateway_name)
-
-    def _handle_gateway_credentials(
-        self,
-        gateway: dict[str, Any],
-        gateway_name: str,
-    ) -> None:
-        """Persist credentials and queue token generation for a CUSTOM_JWT gateway."""
-        gateway_arn = gateway.get("gatewayArn", "")
-        creds = self.credentials.get_credentials(
-            gateway_arn, authorizer_type="CUSTOM_JWT"
-        )
-        if not creds or creds.get("type") in ("iam", "none"):
-            return
-
-        # Already has an index → credentials were loaded from env, no need to persist
-        if creds.get("index"):
-            self._arn_to_index[gateway_arn] = int(creds["index"])
-            self._gateway_configs.append({
-                "gateway_arn": gateway_arn,
-                "server_name": creds.get("server_name", gateway_name),
-            })
-            return
-
-        # Validate before persisting
-        oauth_domain = os.environ.get("OAUTH_DOMAIN", "")
-        if oauth_domain and hasattr(self.credentials, "validate_credentials"):
-            if not self.credentials.validate_credentials(creds, oauth_domain):
-                logger.warning(
-                    f"Credential validation failed for {gateway_arn} — "
-                    f"skipping persistence"
-                )
-                return
-
-        # Persist new credentials
-        server_name = creds.get("server_name", gateway_name)
-        try:
-            idx = self.credentials.persist_credentials(
-                gateway_arn, creds, server_name
-            )
-            self._credentials_saved += 1
-            self._arn_to_index[gateway_arn] = idx
-            self._gateway_configs.append({
-                "gateway_arn": gateway_arn,
-                "server_name": server_name,
-            })
-        except Exception as e:
-            # Rollback: registration succeeded but credential save failed
-            logger.error(
-                f"Failed to persist credentials for {gateway_arn}: {e}. "
-                f"Remediation: manually add credentials to .env and run "
-                f"generate_access_token.py"
-            )
-            # Update the last result to reflect the failure
-            for r in reversed(self.results):
-                if r.get("resource_arn") == gateway_arn:
-                    r["status"] = "failed"
-                    r["message"] = (
-                        f"Registered but credential save failed: {e}"
-                    )
-                    break
+        self._collect_manifest_entry(gateway, registration.service_path)
 
     # ------------------------------------------------------------------
-    # Internal — target registration
+    # Internal -- target registration
     # ------------------------------------------------------------------
 
     def _register_target(
@@ -670,7 +624,7 @@ class SyncOrchestrator:
         self.results.append(result)
 
     # ------------------------------------------------------------------
-    # Internal — runtime registration
+    # Internal -- runtime registration
     # ------------------------------------------------------------------
 
     def _register_runtime(self, runtime: dict[str, Any]) -> None:
@@ -750,13 +704,36 @@ class SyncOrchestrator:
                     f"Registered runtime as Agent: {runtime_name}"
                 )
             except Exception as e:
-                if _is_conflict_error(e):
+                if _is_conflict_error(e) and self.overwrite:
+                    # AgentRegistration has no overwrite field,
+                    # so update via PUT when conflict + overwrite
+                    try:
+                        self._update_agent_with_retry(
+                            registration.path, registration
+                        )
+                        result["status"] = "registered"
+                        result["message"] = "Updated (overwrite)"
+                        logger.info(
+                            f"Updated existing agent: {runtime_name}"
+                        )
+                    except Exception as update_err:
+                        result["status"] = "failed"
+                        result["message"] = str(update_err)
+                        logger.error(
+                            f"Failed to update agent {runtime_name}: "
+                            f"{update_err}"
+                        )
+                elif _is_conflict_error(e):
                     result["status"] = "skipped"
-                    result["message"] = "Already registered - use --overwrite to update"
+                    result["message"] = (
+                        "Already registered - use --overwrite to update"
+                    )
                 else:
                     result["status"] = "failed"
                     result["message"] = str(e)
-                    logger.error(f"Failed to register runtime as agent: {e}")
+                    logger.error(
+                        f"Failed to register runtime as agent: {e}"
+                    )
 
         self.results.append(result)
 
@@ -775,3 +752,11 @@ class SyncOrchestrator:
         self, registration: AgentRegistration
     ) -> None:
         self.registry.register_agent(registration)
+
+    @_retry_registry_call
+    def _update_agent_with_retry(
+        self,
+        path: str,
+        registration: AgentRegistration,
+    ) -> None:
+        self.registry.update_agent(path, registration)
