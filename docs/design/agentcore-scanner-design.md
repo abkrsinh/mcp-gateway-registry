@@ -543,6 +543,8 @@ Runtimes are registered without tokens. The registry health check falls back to 
 
 No manifest entry is created for runtimes.
 
+> **Note:** Agents imported from runtimes are registered with an empty skills array. To add skills, use the agent edit dialog in the UI or the `PUT /api/agents/{path}` API endpoint. Updating skills triggers a security rescan of the agent.
+
 #### Agent Overwrite Handling
 
 `AgentRegistration` does not have an `overwrite` field (unlike `InternalServiceRegistration`). When `--overwrite` is used and an agent already exists (409 Conflict), the orchestrator catches the conflict and calls `update_agent()` (PUT) to update the existing registration:

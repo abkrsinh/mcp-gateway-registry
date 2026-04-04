@@ -40,6 +40,8 @@ The sync command:
 2. Registers each gateway as an MCP Server and each runtime as an MCP Server (protocol=MCP) or A2A Agent (protocol=HTTP/A2A)
 3. Writes `token_refresh_manifest.json` listing all CUSTOM_JWT gateways that need token refresh
 
+> **Note:** Agents imported from runtimes are registered with an empty skills array. To add skills after import, use the agent edit dialog in the UI or the `PUT /api/agents/{path}` API endpoint.
+
 ### Step 2: Configure Client Secrets (for CUSTOM_JWT Gateways)
 
 CUSTOM_JWT gateways need OAuth2 client secrets to generate egress tokens. Add them to your `.env` file:
@@ -391,7 +393,7 @@ uv run cli/mcp_client.py \
 |---|---|---|
 | **Discovery** | Automatic (scans AWS account) | Manual (you provide the config) |
 | **Token refresh** | Automated (`token_refresher.py`) | Manual (you manage token lifecycle) |
-| **Customization** | Standard metadata from AWS API | Full control (tool lists, descriptions, tags) |
+| **Customization** | Standard metadata from AWS API; skills must be added manually after import | Full control (tool lists, descriptions, tags, skills) |
 | **Scale** | All gateways/runtimes at once | One resource at a time |
 | **IdP** | Auto-detected from discovery URL | Any -- just provide a valid JWT |
 
