@@ -1231,7 +1231,7 @@ module "ecs_service_mcpgw" {
         },
         {
           name  = "REGISTRY_BASE_URL"
-          value = "http://registry"
+          value = "http://registry:8080"
         },
         {
           name  = "REGISTRY_USERNAME"

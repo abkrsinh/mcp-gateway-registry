@@ -152,7 +152,9 @@ resource "aws_kms_key" "documentdb" {
             "aws:PrincipalAccount" = data.aws_caller_identity.current.account_id
           }
           StringLike = {
-            "aws:PrincipalArn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*task-exec*"
+            "aws:PrincipalArn" = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*task-exec*",
+               "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/mcp-gateway-v2-*"
+             ]
           }
         }
       },
