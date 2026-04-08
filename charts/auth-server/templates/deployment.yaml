@@ -48,20 +48,70 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           envFrom:
             - secretRef:
-                name: {{ .Values.app.envSecretName }}
+                name: {{ .Values.app.existingSecret | default .Values.app.envSecretName }}
             {{- if eq $authProviderType "keycloak" }}
             - secretRef:
                 name: keycloak-client-secret
             {{- end }}
             - secretRef:
-                name: mongo-credentials
+                name: {{ .Values.global.existingMongoCredentialsSecret | default "mongo-credentials" }}
             {{- if .Values.global.sharedSecretName }}
             - secretRef:
-                name: {{ .Values.global.sharedSecretName }}
+                name: {{ .Values.global.existingSharedSecret | default .Values.global.sharedSecretName }}
             {{- end }}
             {{- if .Values.global.oauthProviderSecretName }}
             - secretRef:
-                name: {{ .Values.global.oauthProviderSecretName }}
+                name: {{ .Values.global.existingOauthProviderSecret | default .Values.global.oauthProviderSecretName }}
+            {{- end }}
+          env:
+            {{- if .Values.entra.clientSecretExistingSecret }}
+            - name: ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.entra.clientSecretExistingSecret }}
+                  key: {{ .Values.entra.clientSecretExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.okta.clientSecretExistingSecret }}
+            - name: OKTA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.okta.clientSecretExistingSecret }}
+                  key: {{ .Values.okta.clientSecretExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.okta.m2mClientSecretExistingSecret }}
+            - name: OKTA_M2M_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.okta.m2mClientSecretExistingSecret }}
+                  key: {{ .Values.okta.m2mClientSecretExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.okta.apiTokenExistingSecret }}
+            - name: OKTA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.okta.apiTokenExistingSecret }}
+                  key: {{ .Values.okta.apiTokenExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.auth0.clientSecretExistingSecret }}
+            - name: AUTH0_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth0.clientSecretExistingSecret }}
+                  key: {{ .Values.auth0.clientSecretExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.auth0.m2mClientSecretExistingSecret }}
+            - name: AUTH0_M2M_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth0.m2mClientSecretExistingSecret }}
+                  key: {{ .Values.auth0.m2mClientSecretExistingSecretKey }}
+            {{- end }}
+            {{- if .Values.auth0.managementApiTokenExistingSecret }}
+            - name: AUTH0_MANAGEMENT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth0.managementApiTokenExistingSecret }}
+                  key: {{ .Values.auth0.managementApiTokenExistingSecretKey }}
             {{- end }}
           livenessProbe:
             httpGet:

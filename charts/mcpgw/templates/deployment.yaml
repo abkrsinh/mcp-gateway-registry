@@ -43,14 +43,21 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           envFrom:
             - secretRef:
-                name: {{ .Values.app.envSecretName }}
+                name: {{ .Values.app.existingSecret | default .Values.app.envSecretName }}
             {{- if .Values.global.sharedSecretName }}
             - secretRef:
-                name: {{ .Values.global.sharedSecretName }}
+                name: {{ .Values.global.existingSharedSecret | default .Values.global.sharedSecretName }}
             {{- end }}
           env:
             - name: HOST
               value: 0.0.0.0
+            {{- if .Values.app.embeddingsApiKeyExistingSecret }}
+            - name: EMBEDDINGS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.embeddingsApiKeyExistingSecret }}
+                  key: {{ .Values.app.embeddingsApiKeyExistingSecretKey }}
+            {{- end }}
           livenessProbe:
             tcpSocket:
               port: 8000

@@ -10,6 +10,7 @@ app:
   name: mcpgw-server
   replicas: 1
   envSecretName: mcpgw-secret
+  existingSecret: ""  # If set, use this existing secret instead of creating one
   port: 8000
 
   # Registry connection
@@ -26,6 +27,8 @@ app:
   embeddingsModelName: all-MiniLM-L6-v2
   embeddingsModelDimensions: "384"
   embeddingsApiKey: ""
+  embeddingsApiKeyExistingSecret: ""  # If set, read EMBEDDINGS_API_KEY from this K8s secret instead of embeddingsApiKey
+  embeddingsApiKeyExistingSecretKey: "EMBEDDINGS_API_KEY"  # Key within the existing secret
   embeddingsApiBase: ""
   embeddingsAwsRegion: us-east-1
 

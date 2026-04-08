@@ -434,3 +434,91 @@ kubectl patch deployment registry -n MYNAMESPACE --type='json' -p='[
 - **`maxSkew: 1`**: Ensures pods are distributed as evenly as possible (difference between zones/nodes is at most 1)
 - **`whenUnsatisfiable: ScheduleAnyway`**: Uses soft constraints that prefer even distribution but won't block
   scheduling if perfect distribution isn't possible. Change to `DoNotSchedule` for strict enforcement
+
+## Using Existing Secrets
+
+By default, the stack chart creates and manages Kubernetes Secrets for all components. For production environments
+using external secret management (e.g., AWS Secrets Manager with External Secrets Operator, HashiCorp Vault), you
+can reference pre-existing secrets instead.
+
+### Stack-Level Existing Secrets
+
+| Value | Default Secret Name | Description |
+|-------|---------------------|-------------|
+| `global.existingSharedSecret` | `shared-secret` | SECRET_KEY and federation tokens shared by auth-server and registry |
+| `global.existingOauthProviderSecret` | `oauth-provider-secret` | Auth provider credentials (Keycloak/Entra/Okta) |
+| `global.existingMongoCredentialsSecret` | `mongo-credentials` | MongoDB connection credentials used by auth-server and registry |
+| `mongodb.existingPasswordSecret` | `my-user-password` | MongoDB operator user password |
+
+### Per-Service Existing Secrets
+
+When deploying individual charts (not the stack), each chart supports its own existing secret:
+
+| Chart | Value | Default Secret Name |
+|-------|-------|---------------------|
+| auth-server | `app.existingSecret` | `auth-server-secret` |
+| registry | `app.existingSecret` | `registry-secret` |
+| mcpgw | `app.existingSecret` | `mcpgw-secret` |
+| keycloak-configure | `keycloak.existingSecret` | `keycloak-configure-secret` |
+| mongodb-configure | `mongodb.existingSecret` | `mongo-credentials` |
+
+### Per-Key Existing Secrets
+
+For finer-grained control, individual sensitive values can be sourced from separate existing secrets. Each sensitive field supports two companion values: `{field}ExistingSecret` (secret name) and `{field}ExistingSecretKey` (key within that secret, defaults to the env var name).
+
+**auth-server and registry:**
+
+| Field | ExistingSecret value | ExistingSecretKey default |
+|-------|---------------------|--------------------------|
+| `entra.clientSecret` | `entra.clientSecretExistingSecret` | `ENTRA_CLIENT_SECRET` |
+| `okta.clientSecret` | `okta.clientSecretExistingSecret` | `OKTA_CLIENT_SECRET` |
+| `okta.m2mClientSecret` | `okta.m2mClientSecretExistingSecret` | `OKTA_M2M_CLIENT_SECRET` |
+| `okta.apiToken` | `okta.apiTokenExistingSecret` | `OKTA_API_TOKEN` |
+| `auth0.clientSecret` | `auth0.clientSecretExistingSecret` | `AUTH0_CLIENT_SECRET` |
+| `auth0.m2mClientSecret` | `auth0.m2mClientSecretExistingSecret` | `AUTH0_M2M_CLIENT_SECRET` |
+| `auth0.managementApiToken` | `auth0.managementApiTokenExistingSecret` | `AUTH0_MANAGEMENT_API_TOKEN` |
+
+**registry only:**
+
+| Field | ExistingSecret value | ExistingSecretKey default |
+|-------|---------------------|--------------------------|
+| `ans.apiKey` | `ans.apiKeyExistingSecret` | `ANS_API_KEY` |
+| `ans.apiSecret` | `ans.apiSecretExistingSecret` | `ANS_API_SECRET` |
+
+**mcpgw only:**
+
+| Field | ExistingSecret value | ExistingSecretKey default |
+|-------|---------------------|--------------------------|
+| `app.embeddingsApiKey` | `app.embeddingsApiKeyExistingSecret` | `EMBEDDINGS_API_KEY` |
+
+When a per-key existing secret is set, the chart skips writing that key into its managed secret and instead injects the value via `env.valueFrom.secretKeyRef`. The key name within the existing secret can be customized using the corresponding `ExistingSecretKey` value.
+
+### Example: Using External Secrets
+
+```bash
+# Deploy stack using pre-existing secrets
+helm install mcp-gateway-registry -n mcp-gateway-registry --create-namespace . \
+  --set global.domain=agents.domain.example \
+  --set global.existingSharedSecret=my-shared-secret \
+  --set global.existingOauthProviderSecret=my-oauth-secret \
+  --set global.existingMongoCredentialsSecret=my-mongo-creds \
+  --set mongodb.existingPasswordSecret=my-mongo-password
+```
+
+```bash
+# Deploy auth-server with Okta client secret from a separate existing secret
+helm install mcp-gateway-registry -n mcp-gateway-registry --create-namespace . \
+  --set global.domain=agents.domain.example \
+  --set global.authProvider.type=okta \
+  --set auth-server.okta.domain=dev-123456.okta.com \
+  --set auth-server.okta.clientId=MY_CLIENT_ID \
+  --set auth-server.okta.clientSecretExistingSecret=my-okta-secret \
+  --set auth-server.okta.clientSecretExistingSecretKey=clientSecret
+```
+
+When an existing secret is specified:
+
+1. The chart skips creating the corresponding managed Secret resource (or skips that key for per-key references)
+2. Deployments and jobs reference the specified secret name instead
+3. The existing secret must contain the expected key (defaulting to the env var name)
+

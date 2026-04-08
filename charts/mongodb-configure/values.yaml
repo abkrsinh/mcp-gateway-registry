@@ -1,4 +1,5 @@
 global:
+  existingMongoCredentialsSecret: ""  # If set, use this existing secret instead of creating one
   authProvider:
     type: keycloak
     entra:
