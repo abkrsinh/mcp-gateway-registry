@@ -147,17 +147,18 @@ Read the generated `tables-YYYY-MM-DD.md` and include its tables directly in the
 ---
 
 ## Executive Summary
-- Comparison with previous report (auto-detected from most recent metrics JSON)
+
+2-line TL;DR paragraph: total unique installs since tracking began, dominant cloud/compute/IdP, average daily install rate, and notable growth trends. Follow immediately with the timeseries chart.
+
+![Registry Installs Timeseries](registry-installs-timeseries-YYYY-MM-DD.png)
+
+### Comparison with Previous Report
 - Deltas for total events, unique instances, heartbeat events, null registry_id count
 - Per-cloud-provider unique registry installs comparison table
 
 ## Deployment Distribution
 
 ![Deployment Distribution](deployment-distribution-YYYY-MM-DD.png)
-
-## Registry Installs Timeseries
-
-![Registry Installs Timeseries](registry-installs-timeseries-YYYY-MM-DD.png)
 
 ## Key Metrics
 | Metric | Value |
