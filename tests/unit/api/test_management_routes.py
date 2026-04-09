@@ -594,6 +594,173 @@ class TestManagementCreateGroup:
 
 
 # =============================================================================
+# TEST POST /management/iam/groups - Create Group with create_in_idp flag
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.api
+class TestManagementCreateGroupCreateInIdp:
+    """Tests for create_in_idp flag handling in group creation."""
+
+    def test_create_group_with_create_in_idp_false(self, test_client_admin):
+        """When create_in_idp is False, group should only be created in MongoDB."""
+        # Arrange
+        client, mock_iam = test_client_admin
+
+        with (
+            patch(
+                "registry.api.management_routes.scope_service.import_group",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_import_group,
+            patch("registry.api.management_routes.AUTH_PROVIDER", "entra"),
+        ):
+            # Act
+            response = client.post(
+                "/api/management/iam/groups",
+                json={
+                    "name": "local-only-group",
+                    "description": "Local only group",
+                    "scope_config": {"create_in_idp": False},
+                },
+            )
+
+            # Assert
+            assert response.status_code == 200
+            data = response.json()
+            assert data["name"] == "local-only-group"
+
+            # IdP create_group should NOT have been called
+            mock_iam.create_group.assert_not_called()
+
+            # MongoDB scope should still be created with group name as mapping
+            mock_import_group.assert_called_once_with(
+                scope_name="local-only-group",
+                description="Local only group",
+                group_mappings=["local-only-group"],
+                server_access=[],
+                ui_permissions={},
+                agent_access=[],
+            )
+
+    def test_create_group_with_create_in_idp_true(self, test_client_admin):
+        """When create_in_idp is True, group should be created in both IdP and MongoDB."""
+        # Arrange
+        client, mock_iam = test_client_admin
+        entra_group_id = "12345678-1234-1234-1234-123456789abc"
+        mock_iam.create_group.return_value = {
+            "id": entra_group_id,
+            "name": "idp-group",
+            "path": "/idp-group",
+            "attributes": None,
+        }
+
+        with (
+            patch(
+                "registry.api.management_routes.scope_service.import_group",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_import_group,
+            patch("registry.api.management_routes.AUTH_PROVIDER", "entra"),
+        ):
+            # Act
+            response = client.post(
+                "/api/management/iam/groups",
+                json={
+                    "name": "idp-group",
+                    "description": "IdP group",
+                    "scope_config": {"create_in_idp": True},
+                },
+            )
+
+            # Assert
+            assert response.status_code == 200
+            data = response.json()
+            assert data["id"] == entra_group_id
+
+            # IdP create_group SHOULD have been called
+            mock_iam.create_group.assert_called_once_with(
+                group_name="idp-group",
+                description="IdP group",
+            )
+
+            # MongoDB scope created with Entra Object ID as mapping
+            mock_import_group.assert_called_once_with(
+                scope_name="idp-group",
+                description="IdP group",
+                group_mappings=[entra_group_id],
+                server_access=[],
+                ui_permissions={},
+                agent_access=[],
+            )
+
+    def test_create_group_default_creates_in_idp(self, test_client_admin):
+        """When create_in_idp not in scope_config, default to creating in IdP."""
+        # Arrange
+        client, mock_iam = test_client_admin
+        mock_iam.create_group.return_value = {
+            "id": "default-group-id",
+            "name": "default-group",
+            "path": "/default-group",
+            "attributes": None,
+        }
+
+        with (
+            patch(
+                "registry.api.management_routes.scope_service.import_group",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("registry.api.management_routes.AUTH_PROVIDER", "keycloak"),
+        ):
+            # Act
+            response = client.post(
+                "/api/management/iam/groups",
+                json={"name": "default-group"},
+            )
+
+            # Assert
+            assert response.status_code == 200
+            mock_iam.create_group.assert_called_once()
+
+
+# =============================================================================
+# TEST DELETE /management/iam/groups/{group_name} - Delete Group (with local-only)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.api
+class TestManagementDeleteGroupLocalOnly:
+    """Tests for deleting groups that only exist in MongoDB (local-only)."""
+
+    def test_delete_local_only_group_succeeds(self, test_client_admin):
+        """Delete succeeds when group only exists in MongoDB (IdP returns not found)."""
+        # Arrange
+        client, mock_iam = test_client_admin
+        mock_iam.delete_group.side_effect = Exception("Group 'local-group' not found")
+
+        with patch(
+            "registry.api.management_routes.scope_service.delete_group",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_delete_scope:
+            # Act
+            response = client.delete("/api/management/iam/groups/local-group")
+
+            # Assert - should succeed because IdP "not found" is handled gracefully
+            assert response.status_code == 200
+            data = response.json()
+            assert data["name"] == "local-group"
+
+            # MongoDB deletion should still proceed
+            mock_delete_scope.assert_called_once_with(
+                group_name="local-group", remove_from_mappings=True
+            )
+
+
+# =============================================================================
 # TEST DELETE /management/iam/groups/{group_name} - Delete Group
 # =============================================================================
 
@@ -640,18 +807,29 @@ class TestManagementDeleteGroup:
         assert response.status_code == 403
         assert "Administrator permissions" in response.json()["detail"]
 
-    def test_delete_group_not_found(self, test_client_admin):
-        """Test error handling when group is not found."""
+    def test_delete_group_not_found_in_idp_still_deletes_from_mongodb(self, test_client_admin):
+        """Test that IdP 'not found' is handled gracefully (local-only group delete)."""
         # Arrange
         client, mock_iam = test_client_admin
         mock_iam.delete_group.side_effect = Exception("Group 'nonexistent' not found")
 
-        # Act
-        response = client.delete("/api/management/iam/groups/nonexistent")
+        with patch(
+            "registry.api.management_routes.scope_service.delete_group",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_delete_scope:
+            # Act
+            response = client.delete("/api/management/iam/groups/nonexistent")
 
-        # Assert
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
+            # Assert - should succeed because IdP "not found" is handled gracefully
+            assert response.status_code == 200
+            data = response.json()
+            assert data["name"] == "nonexistent"
+
+            # MongoDB deletion should still proceed
+            mock_delete_scope.assert_called_once_with(
+                group_name="nonexistent", remove_from_mappings=True
+            )
 
     def test_delete_group_iam_error(self, test_client_admin):
         """Test error handling when IAM manager fails."""

@@ -228,6 +228,11 @@ registry:
     contactEmail: ""  # Optional contact email
     contactUrl: ""  # Optional contact URL/website
 
+  # IdP group filtering (applies to all identity providers)
+  # When set, only groups whose name starts with any of these prefixes are shown in IAM > Groups
+  # Example: "mcp-,registry-,ai-"
+  idpGroupFilterPrefix: ""
+
   ingress:
     enabled: true
     ingressClassName: alb

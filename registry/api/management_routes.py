@@ -408,35 +408,56 @@ async def management_create_group(
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
     """
-    Create a new group in the identity provider and MongoDB (admin only).
+    Create a new group in the identity provider and/or MongoDB (admin only).
 
-    This creates the group in both:
-    1. The configured identity provider (Keycloak or Entra ID)
-    2. MongoDB scopes collection for authorization
+    When create_in_idp is True (default), creates in both the configured
+    identity provider and MongoDB scopes collection.
+    When create_in_idp is False, creates only in MongoDB scopes collection.
     """
     _require_admin(user_context)
 
     iam = get_iam_manager()
 
+    # Extract create_in_idp from scope_config (frontend sends it there)
+    create_in_idp = True  # default: create in IdP
+    if payload.scope_config and "create_in_idp" in payload.scope_config:
+        create_in_idp = bool(payload.scope_config["create_in_idp"])
+    logger.debug(
+        "create_in_idp=%s for group '%s' (from scope_config)",
+        create_in_idp,
+        payload.name,
+    )
+
     try:
-        # Step 1: Create group in identity provider
-        result = await iam.create_group(
-            group_name=payload.name, description=payload.description or ""
-        )
+        result = {}
+        group_mapping_id = payload.name  # default for local-only groups
 
-        # Step 2: Determine group mapping identifier
-        # For Keycloak: use group name
-        # For Entra ID: use the Object ID (GUID) returned from Graph API
-        provider = AUTH_PROVIDER.lower()
-        if provider == "entra":
-            # Entra ID tokens contain group Object IDs, not names
-            group_mapping_id = result.get("id", payload.name)
+        # Step 1: Create group in identity provider (only if requested)
+        if create_in_idp:
+            result = await iam.create_group(
+                group_name=payload.name,
+                description=payload.description or "",
+            )
+
+            # For Entra ID: use Object ID for group mapping
+            # For Keycloak/Okta: use group name
+            provider = AUTH_PROVIDER.lower()
+            if provider == "entra":
+                group_mapping_id = result.get("id", payload.name)
         else:
-            # Keycloak tokens contain group names
-            group_mapping_id = payload.name
+            # Local-only group: build a result dict without calling IdP
+            result = {
+                "id": payload.name,
+                "name": payload.name,
+                "path": f"/{payload.name}",
+                "attributes": {"description": [payload.description or ""]},
+            }
+            logger.info(
+                "Group '%s' created locally only (create_in_idp=False)",
+                payload.name,
+            )
 
-        # Step 3: Create in MongoDB scopes collection
-        # Extract server_access, ui_permissions, and agent_access from scope_config if provided
+        # Step 2: Create in MongoDB scopes collection (always)
         server_access = []
         ui_permissions = {}
         agent_access = []
@@ -460,7 +481,11 @@ async def management_create_group(
         )
 
         if not import_success:
-            logger.warning("Group created in IdP but failed to create in MongoDB: %s", payload.name)
+            logger.warning(
+                "Group %s in IdP but failed to create in MongoDB: %s",
+                "created" if create_in_idp else "skipped",
+                payload.name,
+            )
 
         return GroupSummary(
             id=result.get("id", ""),
@@ -488,19 +513,30 @@ async def management_delete_group(
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
     """
-    Delete a group from the identity provider and MongoDB (admin only).
+    Delete a group from the identity provider and/or MongoDB (admin only).
 
-    This deletes the group from both:
-    1. The configured identity provider (Keycloak or Entra ID)
-    2. MongoDB scopes collection
+    Attempts to delete from IdP first. If the group does not exist in the IdP
+    (e.g., it was created with create_in_idp=False), the IdP error is logged
+    and the MongoDB deletion proceeds.
     """
     _require_admin(user_context)
 
     iam = get_iam_manager()
 
     try:
-        # Step 1: Delete from identity provider
-        await iam.delete_group(group_name=group_name)
+        # Step 1: Attempt to delete from identity provider
+        try:
+            await iam.delete_group(group_name=group_name)
+        except Exception as idp_exc:
+            idp_detail = str(idp_exc).lower()
+            if "not found" in idp_detail or "404" in idp_detail:
+                logger.info(
+                    "Group '%s' not found in IdP (may be local-only), "
+                    "proceeding with MongoDB deletion",
+                    group_name,
+                )
+            else:
+                raise
 
         # Step 2: Delete from MongoDB scopes collection
         delete_success = await scope_service.delete_group(

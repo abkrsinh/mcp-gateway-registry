@@ -415,6 +415,13 @@ registry_api_token = "m3zT65wREARMVDToKosg_DgNkKqS_434hNxy3sslGPY"
 #   - Azure Germany: https://login.microsoftonline.de
 # entra_login_base_url = "https://login.microsoftonline.com"
 
+# IdP Group Filter Prefix (optional, comma-separated, applies to all identity providers)
+# Only groups whose name starts with any of these prefixes are shown in IAM > Groups
+# Example with single prefix:
+# idp_group_filter_prefix = "mcp-"
+# Example with multiple prefixes:
+# idp_group_filter_prefix = "mcp-,registry-,ai-"
+
 # ============================================================================
 # OKTA CONFIGURATION (Alternative to Keycloak)
 # ============================================================================

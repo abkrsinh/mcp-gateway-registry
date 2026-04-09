@@ -1808,8 +1808,7 @@ class RegistryClient:
         data = {"group_name": group_name}
         if description:
             data["description"] = description
-        if create_in_idp:
-            data["create_in_idp"] = True
+        data["create_in_idp"] = str(create_in_idp).lower()
 
         response = self._make_request(
             method="POST", endpoint="/api/servers/groups/create", data=data

@@ -125,6 +125,8 @@ services:
       - ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
       - ENTRA_CLIENT_SECRET=${ENTRA_CLIENT_SECRET}
       - ENTRA_ENABLED=${ENTRA_ENABLED:-false}
+      # IdP group filtering (applies to all identity providers)
+      - IDP_GROUP_FILTER_PREFIX=${IDP_GROUP_FILTER_PREFIX:-}
       # Okta configuration
       - OKTA_DOMAIN=${OKTA_DOMAIN:-}
       - OKTA_CLIENT_ID=${OKTA_CLIENT_ID:-}
@@ -321,6 +323,8 @@ services:
       - ENTRA_CLIENT_ID=${ENTRA_CLIENT_ID}
       - ENTRA_CLIENT_SECRET=${ENTRA_CLIENT_SECRET}
       - ENTRA_ENABLED=${ENTRA_ENABLED:-false}
+      # IdP group filtering (applies to all identity providers)
+      - IDP_GROUP_FILTER_PREFIX=${IDP_GROUP_FILTER_PREFIX:-}
       # Okta configuration
       - OKTA_DOMAIN=${OKTA_DOMAIN:-}
       - OKTA_CLIENT_ID=${OKTA_CLIENT_ID:-}

@@ -141,6 +141,10 @@ module "ecs_service_auth" {
           name  = "ENTRA_CLIENT_ID"
           value = var.entra_client_id
         },
+        {
+          name  = "IDP_GROUP_FILTER_PREFIX"
+          value = var.idp_group_filter_prefix
+        },
         # Okta configuration
         {
           name  = "OKTA_ENABLED"
@@ -589,6 +593,10 @@ module "ecs_service_registry" {
         {
           name  = "ENTRA_CLIENT_ID"
           value = var.entra_client_id
+        },
+        {
+          name  = "IDP_GROUP_FILTER_PREFIX"
+          value = var.idp_group_filter_prefix
         },
         # Okta configuration
         {

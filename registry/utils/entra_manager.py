@@ -58,6 +58,27 @@ def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+def _build_prefix_odata_filter(
+    prefixes: list[str],
+) -> str:
+    """
+    Build an OData $filter expression for multiple displayName prefixes.
+
+    For a single prefix: startswith(displayName,'mcp-')
+    For multiple: startswith(displayName,'mcp-') or startswith(displayName,'ai-')
+
+    Args:
+        prefixes: List of prefix strings (already validated)
+
+    Returns:
+        OData $filter expression string
+    """
+    conditions = [
+        f"startswith(displayName,'{prefix}')" for prefix in prefixes
+    ]
+    return " or ".join(conditions)
+
+
 async def _get_entra_admin_token() -> str:
     """
     Get admin access token from Entra ID for Graph API calls.
@@ -516,23 +537,48 @@ async def delete_entra_user(username_or_id: str) -> bool:
 
 async def list_entra_groups() -> list[dict[str, Any]]:
     """
-    List all groups in Entra ID tenant.
+    List groups in Entra ID tenant.
+
+    When IDP_GROUP_FILTER_PREFIX is set, uses Microsoft Graph API OData $filter
+    for server-side filtering (more efficient than client-side for large tenants).
+    When not set, all groups are returned (backward compatible).
 
     Returns:
         List of group dictionaries
     """
+    from .iam_manager import IDP_GROUP_FILTER_PREFIXES
+
     admin_token = await _get_entra_admin_token()
+
+    params: dict[str, str] = {
+        "$select": "id,displayName,description,securityEnabled",
+    }
+
+    if IDP_GROUP_FILTER_PREFIXES:
+        params["$filter"] = _build_prefix_odata_filter(IDP_GROUP_FILTER_PREFIXES)
+        logger.info(
+            "Filtering Entra ID groups by prefixes (server-side): %s",
+            IDP_GROUP_FILTER_PREFIXES,
+        )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(
             f"{GRAPH_BASE_URL}/groups",
             headers=_auth_headers(admin_token),
-            params={"$select": "id,displayName,description,securityEnabled"},
+            params=params,
         )
         response.raise_for_status()
 
         data = response.json()
         groups = data.get("value", [])
+
+        logger.info(
+            "Retrieved %d groups from Entra ID%s",
+            len(groups),
+            f" (prefix filter: {IDP_GROUP_FILTER_PREFIXES})"
+            if IDP_GROUP_FILTER_PREFIXES
+            else "",
+        )
 
         return [
             {

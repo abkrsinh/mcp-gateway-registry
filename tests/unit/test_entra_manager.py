@@ -20,6 +20,7 @@ import pytest
 
 from registry.utils.entra_manager import (
     EntraAdminError,
+    _build_prefix_odata_filter,
     _generate_temp_password,
     _is_guid,
     create_entra_group,
@@ -935,3 +936,239 @@ class TestListEntraGroups:
 
         # Assert
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_groups_with_single_prefix(
+        self,
+        entra_env_vars,
+        mock_token_response: dict[str, Any],
+    ):
+        """Test that $filter is added when single prefix is configured."""
+        # Arrange
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 200
+        mock_token_resp.raise_for_status.return_value = None
+        mock_token_resp.json.return_value = mock_token_response
+
+        mock_groups_resp = MagicMock()
+        mock_groups_resp.status_code = 200
+        mock_groups_resp.raise_for_status.return_value = None
+        mock_groups_resp.json.return_value = {"value": []}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_token_resp
+        mock_client.get.return_value = mock_groups_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        # Act
+        with (
+            patch("registry.utils.entra_manager.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "registry.utils.iam_manager.IDP_GROUP_FILTER_PREFIXES",
+                ["mcp-"],
+            ),
+        ):
+            await list_entra_groups()
+
+        # Assert - verify $filter was passed in params
+        call_args = mock_client.get.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "$filter" in params
+        assert params["$filter"] == "startswith(displayName,'mcp-')"
+
+    @pytest.mark.asyncio
+    async def test_list_groups_with_multiple_prefixes(
+        self,
+        entra_env_vars,
+        mock_token_response: dict[str, Any],
+    ):
+        """Test that $filter uses or-joined startswith for multiple prefixes."""
+        # Arrange
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 200
+        mock_token_resp.raise_for_status.return_value = None
+        mock_token_resp.json.return_value = mock_token_response
+
+        mock_groups_resp = MagicMock()
+        mock_groups_resp.status_code = 200
+        mock_groups_resp.raise_for_status.return_value = None
+        mock_groups_resp.json.return_value = {"value": []}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_token_resp
+        mock_client.get.return_value = mock_groups_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        # Act
+        with (
+            patch("registry.utils.entra_manager.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "registry.utils.iam_manager.IDP_GROUP_FILTER_PREFIXES",
+                ["mcp-", "registry-", "ai-"],
+            ),
+        ):
+            await list_entra_groups()
+
+        # Assert - verify $filter has or-joined conditions
+        call_args = mock_client.get.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "$filter" in params
+        expected_filter = (
+            "startswith(displayName,'mcp-') or "
+            "startswith(displayName,'registry-') or "
+            "startswith(displayName,'ai-')"
+        )
+        assert params["$filter"] == expected_filter
+
+    @pytest.mark.asyncio
+    async def test_list_groups_without_prefix_no_filter(
+        self,
+        entra_env_vars,
+        mock_token_response: dict[str, Any],
+    ):
+        """Test that no $filter is added when no prefix is configured."""
+        # Arrange
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 200
+        mock_token_resp.raise_for_status.return_value = None
+        mock_token_resp.json.return_value = mock_token_response
+
+        mock_groups_resp = MagicMock()
+        mock_groups_resp.status_code = 200
+        mock_groups_resp.raise_for_status.return_value = None
+        mock_groups_resp.json.return_value = {"value": []}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_token_resp
+        mock_client.get.return_value = mock_groups_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        # Act
+        with (
+            patch("registry.utils.entra_manager.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "registry.utils.iam_manager.IDP_GROUP_FILTER_PREFIXES",
+                [],
+            ),
+        ):
+            await list_entra_groups()
+
+        # Assert - no $filter param when prefix list is empty
+        call_args = mock_client.get.call_args
+        params = call_args.kwargs.get("params", {})
+        assert "$filter" not in params
+
+
+# =============================================================================
+# TEST: _build_prefix_odata_filter()
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBuildPrefixOdataFilter:
+    """Tests for _build_prefix_odata_filter helper function."""
+
+    def test_single_prefix(self):
+        """Test OData filter for a single prefix."""
+        # Act
+        result = _build_prefix_odata_filter(["mcp-"])
+
+        # Assert
+        assert result == "startswith(displayName,'mcp-')"
+
+    def test_multiple_prefixes(self):
+        """Test OData filter with or-joined conditions for multiple prefixes."""
+        # Act
+        result = _build_prefix_odata_filter(["mcp-", "registry-", "ai-"])
+
+        # Assert
+        expected = (
+            "startswith(displayName,'mcp-') or "
+            "startswith(displayName,'registry-') or "
+            "startswith(displayName,'ai-')"
+        )
+        assert result == expected
+
+    def test_two_prefixes(self):
+        """Test OData filter with exactly two prefixes."""
+        # Act
+        result = _build_prefix_odata_filter(["dev-", "staging-"])
+
+        # Assert
+        expected = "startswith(displayName,'dev-') or startswith(displayName,'staging-')"
+        assert result == expected
+
+
+# =============================================================================
+# TEST: IDP_GROUP_FILTER_PREFIX validation
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestPrefixValidation:
+    """Tests for IDP_GROUP_FILTER_PREFIX parsing and validation."""
+
+    def test_valid_single_prefix_parsing(self):
+        """Test that a single prefix is parsed correctly."""
+        # Arrange
+        raw = "mcp-"
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+
+        # Assert
+        assert prefixes == ["mcp-"]
+
+    def test_valid_multiple_prefixes_parsing(self):
+        """Test that comma-separated prefixes are parsed correctly."""
+        # Arrange
+        raw = "mcp-,registry-,ai-"
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+
+        # Assert
+        assert prefixes == ["mcp-", "registry-", "ai-"]
+
+    def test_whitespace_trimming(self):
+        """Test that whitespace around prefixes is trimmed."""
+        # Arrange
+        raw = " mcp- , registry- , ai- "
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+
+        # Assert
+        assert prefixes == ["mcp-", "registry-", "ai-"]
+
+    def test_empty_entries_skipped(self):
+        """Test that empty entries from trailing commas are skipped."""
+        # Arrange
+        raw = "mcp-,,registry-,"
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+
+        # Assert
+        assert prefixes == ["mcp-", "registry-"]
+
+    def test_empty_string_gives_empty_list(self):
+        """Test that empty string gives empty list."""
+        # Arrange
+        raw = ""
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+
+        # Assert
+        assert prefixes == []
+
+    def test_valid_prefix_characters(self):
+        """Test that valid prefixes pass regex validation."""
+        import re
+
+        valid_prefixes = ["mcp-", "registry_groups", "AI Teams", "test123"]
+        for prefix in valid_prefixes:
+            assert re.match(r"^[a-zA-Z0-9\-_ ]+$", prefix), (
+                f"Prefix '{prefix}' should be valid"
+            )
+
+    def test_invalid_prefix_with_single_quote(self):
+        """Test that single quotes are rejected (OData injection prevention)."""
+        import re
+
+        invalid_prefix = "mcp-') or (1 eq 1) or startswith(displayName,'"
+        assert not re.match(r"^[a-zA-Z0-9\-_ ]+$", invalid_prefix)

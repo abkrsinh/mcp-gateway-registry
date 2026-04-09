@@ -125,10 +125,11 @@ module "mcp_gateway" {
   security_add_pending_tag      = var.security_add_pending_tag
 
   # Microsoft Entra ID configuration
-  entra_enabled       = var.entra_enabled
-  entra_tenant_id     = var.entra_tenant_id
-  entra_client_id     = var.entra_client_id
-  entra_client_secret = var.entra_client_secret
+  entra_enabled              = var.entra_enabled
+  entra_tenant_id            = var.entra_tenant_id
+  entra_client_id            = var.entra_client_id
+  entra_client_secret        = var.entra_client_secret
+  idp_group_filter_prefix    = var.idp_group_filter_prefix
 
   # Okta configuration
   okta_enabled           = var.okta_enabled

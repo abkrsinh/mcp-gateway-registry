@@ -2,11 +2,12 @@
 IAM Manager factory for multi-provider support.
 
 This module provides a unified interface for IAM operations across
-different identity providers (Keycloak, Entra ID).
+different identity providers (Keycloak, Entra ID, Okta, Auth0).
 """
 
 import logging
 import os
+import re
 from typing import (
     Any,
     Protocol,
@@ -22,6 +23,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 AUTH_PROVIDER: str = os.environ.get("AUTH_PROVIDER", "keycloak")
+
+# IdP group filtering -- applies to all identity providers
+IDP_GROUP_FILTER_PREFIX: str = os.environ.get("IDP_GROUP_FILTER_PREFIX", "")
+
+# Parse comma-separated prefixes and validate each one to prevent injection
+IDP_GROUP_FILTER_PREFIXES: list[str] = []
+if IDP_GROUP_FILTER_PREFIX:
+    IDP_GROUP_FILTER_PREFIXES = [
+        p.strip() for p in IDP_GROUP_FILTER_PREFIX.split(",") if p.strip()
+    ]
+    for _prefix in IDP_GROUP_FILTER_PREFIXES:
+        if not re.match(r"^[a-zA-Z0-9\-_ ]+$", _prefix):
+            raise ValueError(
+                f"IDP_GROUP_FILTER_PREFIX contains invalid characters in "
+                f"prefix '{_prefix}'. "
+                f"Only alphanumeric, hyphens, underscores, and spaces are allowed."
+            )
+    logger.info("IdP group filter prefixes: %s", IDP_GROUP_FILTER_PREFIXES)
+
+
+def _filter_groups_by_prefix(
+    groups: list[dict[str, Any]],
+    prefixes: list[str],
+) -> list[dict[str, Any]]:
+    """
+    Filter groups by display name prefix (client-side fallback).
+
+    Used when the IdP API does not support server-side prefix filtering.
+
+    Args:
+        groups: List of group dictionaries with a 'name' key
+        prefixes: List of allowed prefixes
+
+    Returns:
+        Filtered list of groups whose name starts with any prefix
+    """
+    if not prefixes:
+        return groups
+
+    return [
+        g for g in groups
+        if any(g.get("name", "").startswith(prefix) for prefix in prefixes)
+    ]
 
 
 @runtime_checkable
@@ -215,10 +259,11 @@ class KeycloakIAMManager:
         return await delete_keycloak_user(username=username)
 
     async def list_groups(self) -> list[dict[str, Any]]:
-        """List all groups from Keycloak."""
+        """List groups from Keycloak, filtered by IDP_GROUP_FILTER_PREFIX if set."""
         from .keycloak_manager import list_keycloak_groups
 
-        return await list_keycloak_groups()
+        groups = await list_keycloak_groups()
+        return _filter_groups_by_prefix(groups, IDP_GROUP_FILTER_PREFIXES)
 
     async def create_group(self, group_name: str, description: str = "") -> dict[str, Any]:
         """Create a group in Keycloak."""
@@ -401,10 +446,11 @@ class OktaIAMManager:
         return await delete_okta_user(username_or_id=username)
 
     async def list_groups(self) -> list[dict[str, Any]]:
-        """List all groups from Okta."""
+        """List groups from Okta, filtered by IDP_GROUP_FILTER_PREFIX if set."""
         from .okta_manager import list_okta_groups
 
-        return await list_okta_groups()
+        groups = await list_okta_groups()
+        return _filter_groups_by_prefix(groups, IDP_GROUP_FILTER_PREFIXES)
 
     async def create_group(self, group_name: str, description: str = "") -> dict[str, Any]:
         """Create a group in Okta."""
@@ -496,10 +542,11 @@ class Auth0IAMManager:
         return await delete_auth0_user(username_or_id=username)
 
     async def list_groups(self) -> list[dict[str, Any]]:
-        """List all roles (groups) from Auth0."""
+        """List roles (groups) from Auth0, filtered by IDP_GROUP_FILTER_PREFIX if set."""
         from .auth0_manager import list_auth0_groups
 
-        return await list_auth0_groups()
+        groups = await list_auth0_groups()
+        return _filter_groups_by_prefix(groups, IDP_GROUP_FILTER_PREFIXES)
 
     async def create_group(self, group_name: str, description: str = "") -> dict[str, Any]:
         """Create a role (group) in Auth0."""

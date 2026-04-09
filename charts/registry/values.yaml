@@ -80,6 +80,11 @@ entra:
   clientSecretExistingSecretKey: "ENTRA_CLIENT_SECRET"  # Key within the existing secret
   tenantId: ""
 
+# IdP group filtering (applies to all identity providers)
+# When set, only groups matching any of these prefixes are shown in IAM > Groups
+# Example: "mcp-,registry-,ai-"
+idpGroupFilterPrefix: ""
+
 # Okta integration (used when authProvider.type = "okta" in standalone deployment)
 okta:
   domain: ""  # e.g., dev-123456.okta.com
