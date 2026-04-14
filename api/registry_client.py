@@ -156,6 +156,10 @@ class ServerListResponse(BaseModel):
     """Server list response model."""
 
     servers: list[Server] = Field(..., description="List of servers")
+    total_count: int = Field(..., description="Total count of matching servers (all pages)")
+    limit: int = Field(..., description="Page size applied")
+    offset: int = Field(..., description="Offset applied")
+    has_next: bool = Field(..., description="Whether more pages exist")
 
 
 class ServiceResponse(BaseModel):
@@ -1330,6 +1334,9 @@ class SkillListResponse(BaseModel):
 
     skills: list[SkillCard] = Field(default_factory=list, description="List of skills")
     total_count: int = Field(0, description="Total number of skills")
+    limit: int = Field(..., description="Page size applied")
+    offset: int = Field(..., description="Offset applied")
+    has_next: bool = Field(..., description="Whether more pages exist")
 
 
 class SkillHealthResponse(BaseModel):
@@ -1596,9 +1603,17 @@ class RegistryClient:
         logger.info(f"Credential updated for {service_path}: scheme={result.get('auth_scheme')}")
         return result
 
-    def list_services(self) -> ServerListResponse:
+    def list_services(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> ServerListResponse:
         """
         List all services in the registry.
+
+        Args:
+            limit: Maximum number of services to return per page
+            offset: Number of services to skip for pagination
 
         Returns:
             Server list response
@@ -1608,14 +1623,23 @@ class RegistryClient:
         """
         logger.info("Listing all services")
 
-        response = self._make_request(method="GET", endpoint="/api/servers")
+        params = {
+            "limit": limit,
+            "offset": offset,
+        }
+
+        response = self._make_request(method="GET", endpoint="/api/servers", params=params)
 
         response_data = response.json()
         logger.debug(f"Raw API response: {json.dumps(response_data, indent=2, default=str)}")
 
         try:
             result = ServerListResponse(**response_data)
-            logger.info(f"Retrieved {len(result.servers)} services")
+            logger.info(
+                f"Retrieved {len(result.servers)} services"
+                f" (total={result.total_count}, offset={result.offset},"
+                f" limit={result.limit}, has_next={result.has_next})"
+            )
             return result
         except Exception as e:
             logger.error(f"Failed to parse server list response: {e}")
@@ -3515,7 +3539,11 @@ class RegistryClient:
         return SkillCard(**result)
 
     def list_skills(
-        self, include_disabled: bool = False, tag: str | None = None
+        self,
+        include_disabled: bool = False,
+        tag: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
     ) -> SkillListResponse:
         """
         List all Agent Skills.
@@ -3523,6 +3551,8 @@ class RegistryClient:
         Args:
             include_disabled: Include disabled skills
             tag: Filter by tag
+            limit: Maximum number of skills to return per page
+            offset: Number of skills to skip for pagination
 
         Returns:
             SkillListResponse with list of skills
@@ -3532,20 +3562,35 @@ class RegistryClient:
         """
         logger.info("Listing skills")
 
-        params = {}
+        params: dict[str, str | int] = {
+            "limit": limit,
+            "offset": offset,
+        }
         if include_disabled:
             params["include_disabled"] = "true"
         if tag:
             params["tag"] = tag
 
-        response = self._make_request(
-            method="GET", endpoint="/api/skills", params=params if params else None
-        )
+        response = self._make_request(method="GET", endpoint="/api/skills", params=params)
 
         result = response.json()
         skills = [SkillCard(**s) for s in result.get("skills", [])]
-        logger.info(f"Retrieved {len(skills)} skills")
-        return SkillListResponse(skills=skills, total_count=result.get("total_count", len(skills)))
+        total_count = result.get("total_count", len(skills))
+        resp_limit = result.get("limit", limit)
+        resp_offset = result.get("offset", offset)
+        has_next = result.get("has_next", False)
+        logger.info(
+            f"Retrieved {len(skills)} skills"
+            f" (total={total_count}, offset={resp_offset},"
+            f" limit={resp_limit}, has_next={has_next})"
+        )
+        return SkillListResponse(
+            skills=skills,
+            total_count=total_count,
+            limit=resp_limit,
+            offset=resp_offset,
+            has_next=has_next,
+        )
 
     def get_skill(self, path: str) -> SkillCard:
         """
