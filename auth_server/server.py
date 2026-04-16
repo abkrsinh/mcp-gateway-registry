@@ -1948,11 +1948,11 @@ async def generate_user_token(request: GenerateTokenRequest):
             f"groups={user_groups}, scopes={requested_scopes}"
         )
 
-        # For OAuth users, generate a self-signed JWT with their identity and groups
+        # For OAuth and network-trusted users, generate a self-signed JWT with their identity and groups
         # This token is issued by our auth server and can be verified using SECRET_KEY
-        if auth_method == "oauth2":
+        if auth_method in ("oauth2", "network-trusted"):
             logger.info(
-                f"Generating self-signed JWT for OAuth user '{hash_username(username)}' "
+                f"Generating self-signed JWT for {auth_method} user '{hash_username(username)}' "
                 f"with groups: {user_groups}"
             )
 
@@ -1969,7 +1969,7 @@ async def generate_user_token(request: GenerateTokenRequest):
                 "groups": user_groups,
                 "scope": " ".join(requested_scopes) if requested_scopes else "",
                 "token_use": "access",
-                "auth_method": "oauth2",
+                "auth_method": auth_method,
                 "provider": provider,
                 "iat": current_time,
                 "exp": current_time + expires_in,
